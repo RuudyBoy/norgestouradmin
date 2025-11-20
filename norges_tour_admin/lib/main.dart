@@ -153,12 +153,24 @@ class AdminDashboard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 4),
-                      Row(
+                     Row(
                         children: [
                           const Icon(Icons.map, size: 16, color: Colors.grey),
                           const SizedBox(width: 4),
-                          Text(location),
+                          
+                          // --- FIKSEN ER HER ---
+                          // Flexible gjør at teksten krymper hvis det er trangt
+                          Flexible( 
+                            child: Text(
+                              location,
+                              overflow: TextOverflow.ellipsis, // Legger til "..." hvis for lang
+                              maxLines: 1, // Holder seg på én linje
+                            ),
+                          ),
+                          
                           const SizedBox(width: 16),
+                          
+                          // Datoene holder vi som de er (de er som regel korte nok)
                           const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
                           const SizedBox(width: 4),
                           Text("$start - $end"),
