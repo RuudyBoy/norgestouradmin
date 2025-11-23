@@ -70,7 +70,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     ]),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
-                      value: selectedPosition,
+                      initialValue: selectedPosition,
                       decoration: const InputDecoration(labelText: "Posisjon"),
                       items: validPositions.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
                       onChanged: (val) => selectedPosition = val,

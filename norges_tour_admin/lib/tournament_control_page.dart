@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'match_control_page.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -397,7 +398,6 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
   }
 
   Widget _buildMatchesTab() {
-      // ... (Lim inn koden for _buildMatchesTab fra forrige svar her) ...
       return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('matches')
@@ -421,14 +421,21 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
             
             return Card(
               child: ListTile(
-                leading: Icon(
-                  Icons.circle, 
-                  color: status == 'live' ? Colors.red : Colors.grey,
-                  size: 12,
+                trailing: IconButton(
+                  icon: const Icon(Icons.sports_esports, color: Colors.green), // Gamepad ikon
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MatchControlPage(
+                          matchId: matches[index].id, // Send ID
+                          teamAName: data['team_a_name'] ?? 'Lag A',
+                          teamBName: data['team_b_name'] ?? 'Lag B',
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                title: Text("${data['team_a_name'] ?? 'Lag A'} vs ${data['team_b_name'] ?? 'Lag B'}"),
-                subtitle: Text("Status: $status | Bane: ${data['court'] ?? '?'}"),
-                trailing: const Icon(Icons.edit),
               ),
             );
           },
