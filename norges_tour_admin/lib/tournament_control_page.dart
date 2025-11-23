@@ -24,8 +24,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     // VIKTIG: Her må vi etter hvert bytte ut "localhost" med den ekte nettadressen
     // når vi legger ut appen på nettet. 
     // For nå bruker vi en placeholder slik at du ser at det virker.
-    String scorekeeperUrl = "https://norges-tour-scorekeeper.web.app/?matchId=$matchId";
-
+    String scorekeeperUrl = "https://spikedunk.web.app/?matchId=$matchId";
     showDialog(
       context: context,
       builder: (context) {

@@ -1,6 +1,6 @@
 {
-    "name": "norges_tour_admin",
-    "short_name": "norges_tour_admin",
+    "name": "SpikeDunk Admin",
+    "short_name": "SpikeDunk Admin",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

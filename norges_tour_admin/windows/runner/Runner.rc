@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "norges_tour_admin" "\0"
+            VALUE "FileDescription", "SpikeDunk Admin" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "norges_tour_admin" "\0"
+            VALUE "InternalName", "SpikeDunk Admin" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
             VALUE "OriginalFilename", "norges_tour_admin.exe" "\0"
-            VALUE "ProductName", "norges_tour_admin" "\0"
+            VALUE "ProductName", "SpikeDunk Admin" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
