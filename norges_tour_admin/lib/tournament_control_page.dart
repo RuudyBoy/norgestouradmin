@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'match_control_page.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -18,6 +19,46 @@ class TournamentControlPage extends StatefulWidget {
 
 class _TournamentControlPageState extends State<TournamentControlPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+
+  void _showQrDialog(String matchId, String teamA, String teamB) {
+    // VIKTIG: Her må vi etter hvert bytte ut "localhost" med den ekte nettadressen
+    // når vi legger ut appen på nettet. 
+    // For nå bruker vi en placeholder slik at du ser at det virker.
+    String scorekeeperUrl = "https://norges-tour-scorekeeper.web.app/?matchId=$matchId";
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Dommer QR-kode"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Scan for å styre kampen:\n$teamA vs $teamB", textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 200,
+                width: 200,
+                child: QrImageView(
+                  data: scorekeeperUrl,
+                  version: QrVersions.auto,
+                  size: 200.0,
+                ),
+              ),
+              const SizedBox(height: 20),
+              SelectableText(scorekeeperUrl, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Lukk"),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   void initState() {
@@ -421,20 +462,40 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
             
             return Card(
               child: ListTile(
-                trailing: IconButton(
-                  icon: const Icon(Icons.sports_esports, color: Colors.green), // Gamepad ikon
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => MatchControlPage(
-                          matchId: matches[index].id, // Send ID
-                          teamAName: data['team_a_name'] ?? 'Lag A',
-                          teamBName: data['team_b_name'] ?? 'Lag B',
-                        ),
+                leading: const Icon(Icons.sports_volleyball),
+                title: Text("${data['team_a_name']} vs ${data['team_b_name']}"),
+                subtitle: Text("Bane: ${data['court']} • Status: $status"),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // QR-KNAPP
+                    IconButton(
+                      icon: const Icon(Icons.qr_code, color: Colors.black),
+                      tooltip: "Vis QR-kode for dommer",
+                      onPressed: () => _showQrDialog(
+                        matches[index].id, 
+                        data['team_a_name'] ?? 'Lag A', 
+                        data['team_b_name'] ?? 'Lag B'
                       ),
-                    );
-                  },
+                    ),
+                    
+                    // KAMPSTYRING-KNAPP
+                    IconButton(
+                      icon: const Icon(Icons.sports_esports, color: Colors.green),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => MatchControlPage(
+                              matchId: matches[index].id,
+                              teamAName: data['team_a_name'] ?? 'Lag A',
+                              teamBName: data['team_b_name'] ?? 'Lag B',
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
             );
