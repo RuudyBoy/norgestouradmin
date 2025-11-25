@@ -20,52 +20,10 @@ class TournamentControlPage extends StatefulWidget {
 class _TournamentControlPageState extends State<TournamentControlPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  void _showQrDialog(String matchId, String teamA, String teamB) {
-    // VIKTIG: Her må vi etter hvert bytte ut "localhost" med den ekte nettadressen
-    // når vi legger ut appen på nettet. 
-    // For nå bruker vi en placeholder slik at du ser at det virker.
-    String scorekeeperUrl = "https://spikedunk.web.app/?matchId=$matchId";
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text("Dommer QR-kode"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("Scan for å styre kampen:\n$teamA vs $teamB", textAlign: TextAlign.center),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 200,
-                width: 200,
-                child: QrImageView(
-                  data: scorekeeperUrl,
-                  version: QrVersions.auto,
-                  size: 200.0,
-                ),
-              ),
-              const SizedBox(height: 20),
-              SelectableText(scorekeeperUrl, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Lukk"),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   void initState() {
     super.initState();
-    // Vi setter opp kontrolleren med 2 faner
     _tabController = TabController(length: 2, vsync: this);
-    
-    // Vi ber appen tegne seg på nytt når vi bytter fane (så knappen oppdateres)
     _tabController.addListener(() {
       setState(() {});
     });
@@ -77,274 +35,343 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     super.dispose();
   }
 
-  // --- FUNKSJON: LEGG TIL LAG ---
-  // --- FUNKSJON: LEGG TIL LAG (MED SPILLER-VALG) ---
+  // --- 1. QR DIALOG ---
+  void _showQrDialog(String matchId, String teamA, String teamB) {
+    // HUSK: Bytt til din ekte web-app link!
+    String scorekeeperUrl = "https://spikedunk.web.app/?matchId=$matchId";
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Dommer QR-kode"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Scan for å styre kampen:\n$teamA vs $teamB", textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 200, width: 200,
+                child: QrImageView(data: scorekeeperUrl, version: QrVersions.auto, size: 200.0),
+              ),
+              const SizedBox(height: 20),
+              SelectableText(scorekeeperUrl, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            ],
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("Lukk"))],
+        );
+      },
+    );
+  }
+
+  // --- 2. NY LOGIKK: HENT BILDER OG LAGRE KAMP ---
+// --- 2. NY LOGIKK: HENT BILDER OG LAGRE KAMP (MED ID) ---
+  Future<void> _addMatchFromTeams(Map<String, dynamic> teamA, Map<String, dynamic> teamB) async {
+    
+    // Hjelpefunksjon for å hente bilde-URL
+    Future<String?> getImageUrl(String? playerId) async {
+      if (playerId == null) return null;
+      try {
+        final doc = await FirebaseFirestore.instance.collection('players').doc(playerId).get();
+        if (doc.exists && doc.data() != null) {
+          // Sjekk om feltet 'image_url' finnes, hvis ikke returner null
+          final data = doc.data()!;
+          if (data.containsKey('image_url')) {
+             return data['image_url'] as String?;
+          }
+        }
+      } catch (e) {
+        print("Kunne ikke hente bilde for $playerId: $e");
+      }
+      return null;
+    }
+
+    showDialog(
+      context: context, 
+      barrierDismissible: false, 
+      builder: (c) => const Center(child: CircularProgressIndicator())
+    );
+
+    // Hent bilder
+    final p1AImg = await getImageUrl(teamA['player1_id']);
+    final p2AImg = await getImageUrl(teamA['player2_id']);
+    final p1BImg = await getImageUrl(teamB['player1_id']);
+    final p2BImg = await getImageUrl(teamB['player2_id']);
+
+    // Lagre kampen med ID-er
+    await FirebaseFirestore.instance.collection('matches').add({
+      'tournament_id': widget.tournamentId,
+      'status': 'scheduled',
+      'court': 'Hovedbane',
+      'timestamp': FieldValue.serverTimestamp(),
+      'home_score': 0, 
+      'away_score': 0,
+
+      // Lag A info
+      'team_a_name': teamA['team_name'],
+      'team_a_id': teamA['id'],
+      
+      'team_a_p1_name': teamA['player1_name'],
+      'team_a_p1_id': teamA['player1_id'],   // <--- NYTT: Lagrer ID
+      'team_a_p1_img': p1AImg,
+      
+      'team_a_p2_name': teamA['player2_name'],
+      'team_a_p2_id': teamA['player2_id'],   // <--- NYTT: Lagrer ID
+      'team_a_p2_img': p2AImg,
+
+      // Lag B info
+      'team_b_name': teamB['team_name'],
+      'team_b_id': teamB['id'],
+      
+      'team_b_p1_name': teamB['player1_name'],
+      'team_b_p1_id': teamB['player1_id'],   // <--- NYTT: Lagrer ID
+      'team_b_p1_img': p1BImg,
+      
+      'team_b_p2_name': teamB['player2_name'],
+      'team_b_p2_id': teamB['player2_id'],   // <--- NYTT: Lagrer ID
+      'team_b_p2_img': p2BImg,
+    });
+
+    if (mounted) {
+      Navigator.pop(context); // Fjern lastesirkel
+      Navigator.pop(context); // Fjern dialog
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kamp opprettet med ID-er!")));
+    }
+  }
+
+  // --- NY FUNKSJON: BEKREFT SLETTING ---
+  void _confirmDelete(String docId, String collection, String title) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text("Slett $title?"),
+          content: const Text("Er du sikker? Dette kan ikke angres."),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context), // Lukk vindu (Nei)
+              child: const Text("Avbryt"),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+              onPressed: () {
+                // Utfør slettingen
+                FirebaseFirestore.instance.collection(collection).doc(docId).delete();
+                Navigator.pop(context); // Lukk vindu
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Slettet!")));
+              },
+              child: const Text("Slett"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // --- 3. NY DIALOG: VELG LAG FRA LISTE ---
+ // --- 3. NY DIALOG: VELG LAG FRA LISTE (FIKSET VERSJON) ---
+  void _showAddMatchDialog() {
+    // VIKTIG ENDRING: Vi lagrer kun ID-en til laget, ikke hele objektet
+    String? selectedTeamAId;
+    String? selectedTeamBId;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        // Vi bruker StatefulBuilder for å kunne oppdatere dropdowns inne i dialogen
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text("Opprett ny kamp"),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('teams')
+                      .where('tournament_id', isEqualTo: widget.tournamentId)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    
+                    final teamDocs = snapshot.data!.docs;
+                    if (teamDocs.isEmpty) return const Text("Ingen lag registrert enda. Gå til 'Lag'-fanen først.");
+
+                    // Vi lager listen med Items, men verdien er nå doc.id (String)
+                    final teamItems = teamDocs.map((doc) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      return DropdownMenuItem<String>(
+                        value: doc.id, // <--- HER ER FIXEN: Vi bruker ID som verdi
+                        child: Text(data['team_name'] ?? "Ukjent lag"),
+                      );
+                    }).toList();
+
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // --- VELG LAG A ---
+                        DropdownButtonFormField<String>(
+                          decoration: const InputDecoration(labelText: "Hjemmelag (Lag A)", border: OutlineInputBorder()),
+                          items: teamItems,
+                          value: selectedTeamAId,
+                          onChanged: (value) {
+                            setState(() => selectedTeamAId = value);
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        
+                        // --- VELG LAG B ---
+                        DropdownButtonFormField<String>(
+                          decoration: const InputDecoration(labelText: "Bortelag (Lag B)", border: OutlineInputBorder()),
+                          items: teamItems,
+                          value: selectedTeamBId,
+                          onChanged: (value) {
+                            setState(() => selectedTeamBId = value);
+                          },
+                        ),
+                        
+                        // Viser navnene for bekreftelse (valgfritt)
+                        if (selectedTeamAId != null && selectedTeamBId != null)
+                           const Padding(
+                             padding: EdgeInsets.only(top: 10),
+                             child: Text("Klar til å opprette...", style: TextStyle(color: Colors.green)),
+                           ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
+                ElevatedButton(
+                  onPressed: () {
+                    if (selectedTeamAId != null && selectedTeamBId != null) {
+                      if (selectedTeamAId == selectedTeamBId) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Du kan ikke velge samme lag to ganger!")));
+                        return;
+                      }
+
+                      // Nå må vi finne tilbake til selve lag-dataene basert på ID-en
+                      // Dette gjør vi ved å slå opp i snapshotet vi allerede har tilgang til (via en ny spørring eller StreamBuilderen over).
+                      // Men siden vi er utenfor StreamBuilderen her, gjør vi et lite triks:
+                      
+                      FirebaseFirestore.instance.collection('teams').doc(selectedTeamAId).get().then((docA) {
+                        FirebaseFirestore.instance.collection('teams').doc(selectedTeamBId).get().then((docB) {
+                          
+                          if (docA.exists && docB.exists) {
+                            // Vi må legge til ID manuelt i data-mappen siden .data() ikke inkluderer den
+                            Map<String, dynamic> teamAData = docA.data()!;
+                            teamAData['id'] = docA.id;
+                            
+                            Map<String, dynamic> teamBData = docB.data()!;
+                            teamBData['id'] = docB.id;
+
+                            // Start prosessen
+                            _addMatchFromTeams(teamAData, teamBData);
+                          }
+                        });
+                      });
+                      
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text("Opprett Kamp"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- 4. LEGG TIL LAG (Beholdt som den var) ---
   void _showAddTeamDialog() {
     final TextEditingController teamNameController = TextEditingController();
-    
-    // Variabler for å lagre valgte spillere
     String? selectedPlayer1Id;
     String? selectedPlayer1Name;
-    
     String? selectedPlayer2Id;
     String? selectedPlayer2Name;
 
     showDialog(
       context: context,
       builder: (context) => StreamBuilder<QuerySnapshot>(
-        // 1. Hent alle spillere fra databasen
         stream: FirebaseFirestore.instance.collection('players').orderBy('first_name').snapshots(),
         builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           
-          // Sjekk om vi har data
-          if (!snapshot.hasData) {
-            return const AlertDialog(content: SizedBox(height: 50, child: Center(child: CircularProgressIndicator())));
-          }
-
           final playerDocs = snapshot.data!.docs;
-          
-          // Hvis ingen spillere finnes, må vi si ifra
-          if (playerDocs.isEmpty) {
-            return AlertDialog(
-              title: const Text("Mangler spillere"),
-              content: const Text("Du må registrere spillere i databasen før du kan lage lag."),
-              actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],
-            );
-          }
+          if (playerDocs.isEmpty) return const AlertDialog(content: Text("Ingen spillere i databasen."));
 
-          // Lag listen til dropdown-menyen
-          List<DropdownMenuItem<String>> playerItems = playerDocs.map((doc) {
+          final playerItems = playerDocs.map((doc) {
             final data = doc.data() as Map<String, dynamic>;
-            // Vi setter sammen fornavn og etternavn
             final fullName = "${data['first_name']} ${data['last_name']}";
             return DropdownMenuItem<String>(
-              value: doc.id, // VIKTIG: Vi lagrer ID-en som verdi
-              child: Text(fullName), // Vi viser navnet til brukeren
+              value: doc.id,
+              child: Text(fullName),
             );
           }).toList();
 
-          return AlertDialog(
-            title: const Text("Registrer nytt lag"),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: teamNameController,
-                    decoration: const InputDecoration(labelText: "Lagnavn (f.eks. Mol/Sørum)"),
+          return StatefulBuilder( // Lar oss oppdatere dropdowns internt i dialogen
+            builder: (context, setState) {
+              return AlertDialog(
+                title: const Text("Registrer nytt lag"),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(controller: teamNameController, decoration: const InputDecoration(labelText: "Lagnavn")),
+                      const SizedBox(height: 15),
+                      DropdownButtonFormField(
+                        decoration: const InputDecoration(labelText: "Spiller 1"),
+                        items: playerItems,
+                        onChanged: (val) {
+                          selectedPlayer1Id = val;
+                          final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
+                          selectedPlayer1Name = "${p['first_name']} ${p['last_name']}";
+                        },
+                      ),
+                      const SizedBox(height: 15),
+                      DropdownButtonFormField(
+                        decoration: const InputDecoration(labelText: "Spiller 2"),
+                        items: playerItems,
+                        onChanged: (val) {
+                          selectedPlayer2Id = val;
+                          final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
+                          selectedPlayer2Name = "${p['first_name']} ${p['last_name']}";
+                        },
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 24),
-                  
-                  // --- SPILLER 1 VELGER ---
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: "Velg Spiller 1", border: OutlineInputBorder()),
-                    items: playerItems,
-                    onChanged: (value) {
-                      selectedPlayer1Id = value;
-                      // Finn navnet som hører til ID-en for lagring
-                      final selectedDoc = playerDocs.firstWhere((doc) => doc.id == value);
-                      final data = selectedDoc.data() as Map<String, dynamic>;
-                      selectedPlayer1Name = "${data['first_name']} ${data['last_name']}";
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
+                  ElevatedButton(
+                    onPressed: () {
+                      if (teamNameController.text.isNotEmpty && selectedPlayer1Id != null && selectedPlayer2Id != null) {
+                        FirebaseFirestore.instance.collection('teams').add({
+                          'team_name': teamNameController.text,
+                          'tournament_id': widget.tournamentId,
+                          'player1_id': selectedPlayer1Id,
+                          'player1_name': selectedPlayer1Name,
+                          'player2_id': selectedPlayer2Id,
+                          'player2_name': selectedPlayer2Name,
+                          'created_at': FieldValue.serverTimestamp(),
+                        });
+                        Navigator.pop(context);
+                      }
                     },
-                  ),
-                  
-                  const SizedBox(height: 16),
-
-                  // --- SPILLER 2 VELGER ---
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: "Velg Spiller 2", border: OutlineInputBorder()),
-                    items: playerItems,
-                    onChanged: (value) {
-                      selectedPlayer2Id = value;
-                      final selectedDoc = playerDocs.firstWhere((doc) => doc.id == value);
-                      final data = selectedDoc.data() as Map<String, dynamic>;
-                      selectedPlayer2Name = "${data['first_name']} ${data['last_name']}";
-                    },
+                    child: const Text("Lagre Lag"),
                   ),
                 ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Avbryt"),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  if (teamNameController.text.isNotEmpty && 
-                      selectedPlayer1Id != null && 
-                      selectedPlayer2Id != null) {
-                    
-                    if (selectedPlayer1Id == selectedPlayer2Id) {
-                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Samme spiller valgt to ganger!")));
-                       return;
-                    }
-
-                    // 1. Lagre til Firebase med BÅDE ID og Navn
-                    await FirebaseFirestore.instance.collection('teams').add({
-                      'team_name': teamNameController.text,
-                      'tournament_id': widget.tournamentId,
-                      
-                      // Her lagrer vi ID-ene (for kobling)
-                      'player1_id': selectedPlayer1Id,
-                      'player2_id': selectedPlayer2Id,
-                      
-                      // Her lagrer vi navnene (for rask visning)
-                      'player1_name': selectedPlayer1Name,
-                      'player2_name': selectedPlayer2Name,
-                      
-                      'created_at': FieldValue.serverTimestamp(),
-                    });
-                    
-                    if (mounted) Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Lag lagret med ID-er!")),
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fyll ut alt!")));
-                  }
-                },
-                child: const Text("Lagre Lag"),
-              ),
-            ],
-          );
-        }
-      ),
-    );
-  }
-  
-  // --- FUNKSJON: LEGG TIL KAMP ---
-// --- FUNKSJON: LEGG TIL KAMP (MED DROPDOWN) ---
-  void _showAddMatchDialog() {
-    final TextEditingController courtController = TextEditingController();
-    
-    // Vi trenger variabler for å huske hva brukeren velger
-    String? selectedTeamA; // Vil lagre Navnet på Lag A
-    String? selectedTeamB; // Vil lagre Navnet på Lag B
-    
-    // (Tips: I en enda proffere versjon lagrer vi ID-ene også, men navn holder nå)
-
-    showDialog(
-      context: context,
-      builder: (context) => StreamBuilder<QuerySnapshot>(
-        // 1. Hent alle lag som hører til denne turneringen
-        stream: FirebaseFirestore.instance
-            .collection('teams')
-            .where('tournament_id', isEqualTo: widget.tournamentId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          
-          // Hvis vi venter på data eller det oppstår feil...
-          if (!snapshot.hasData) {
-            return const AlertDialog(content: SizedBox(height: 50, child: Center(child: CircularProgressIndicator())));
-          }
-
-          final teamDocs = snapshot.data!.docs;
-
-          // Lag en liste med "DropdownMenuItem" basert på lagene
-          List<DropdownMenuItem<String>> teamItems = teamDocs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final teamName = data['team_name'] as String;
-            return DropdownMenuItem<String>(
-              value: teamName, // Dette er verdien vi lagrer
-              child: Text(teamName), // Dette er teksten vi ser
-            );
-          }).toList();
-
-          return AlertDialog(
-            title: const Text("Sett opp ny kamp"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text("Velg lag fra listen:"),
-                const SizedBox(height: 16),
-                
-                // --- DROPDOWN FOR LAG A ---
-                DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(labelText: "Lag A (Hjemmelag)"),
-                  items: teamItems,
-                  onChanged: (value) {
-                    selectedTeamA = value;
-                  },
-                ),
-                
-                const SizedBox(height: 16),
-
-                // --- DROPDOWN FOR LAG B ---
-                DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(labelText: "Lag B (Bortelag)"),
-                  items: teamItems,
-                  onChanged: (value) {
-                    selectedTeamB = value;
-                  },
-                ),
-
-                const SizedBox(height: 16),
-                
-                // Bane er fortsatt tekstfelt (til vi lager en bane-liste)
-                TextField(
-                  controller: courtController,
-                  decoration: const InputDecoration(
-                    labelText: "Bane (f.eks. Bane 1)", 
-                    icon: Icon(Icons.map),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Avbryt"),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  // Sjekk at begge lag er valgt
-                  if (selectedTeamA != null && selectedTeamB != null) {
-                    
-                    // Sjekk at man ikke valgte samme lag to ganger
-                    if (selectedTeamA == selectedTeamB) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Et lag kan ikke spille mot seg selv!")),
-                      );
-                      return;
-                    }
-
-                    // 1. Lagre til 'matches' i Firebase
-                    await FirebaseFirestore.instance.collection('matches').add({
-                      'tournament_id': widget.tournamentId,
-                      'team_a_name': selectedTeamA,
-                      'team_b_name': selectedTeamB,
-                      'home_score': 0,
-                      'away_score': 0,
-                      'status': 'scheduled',
-                      'court': courtController.text.isEmpty ? 'Bane ?' : courtController.text,
-                      'created_at': FieldValue.serverTimestamp(),
-                    });
-                    
-                    // 2. Lukk vinduet
-                    if (mounted) Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Kamp satt opp!")),
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Du må velge to lag!")),
-                    );
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green[700],
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text("Lagre Kamp"),
-              ),
-            ],
+              );
+            }
           );
         }
       ),
     );
   }
 
+  // --- 5. UI BUILD ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -353,39 +380,25 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
         backgroundColor: Colors.blue[900],
         foregroundColor: Colors.white,
         bottom: TabBar(
-          controller: _tabController, // Koble til vår kontroller
+          controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          tabs: const [
-            Tab(icon: Icon(Icons.sports_volleyball), text: "Kamper"), // Index 0
-            Tab(icon: Icon(Icons.groups), text: "Lag"),               // Index 1
-          ],
+          tabs: const [Tab(icon: Icon(Icons.sports_volleyball), text: "Kamper"), Tab(icon: Icon(Icons.groups), text: "Lag")],
         ),
       ),
       body: TabBarView(
-        controller: _tabController, // Koble til her også
-        children: [
-          // Fane 0: Kamper
-          _buildMatchesTab(),
-
-          // Fane 1: Lag
-          _buildTeamsTab(),
-        ],
+        controller: _tabController,
+        children: [_buildMatchesTab(), _buildTeamsTab()],
       ),
-      
-      // --- DEN SMARTE KNAPPEN ---
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           if (_tabController.index == 1) {
-            // Hvis vi er på LAG-fanen (Index 1)
             _showAddTeamDialog();
           } else {
-            // Hvis vi er på KAMPER-fanen (Index 0)
-            _showAddMatchDialog(); // <--- HER KJØRER VI NY KODE!
+            _showAddMatchDialog(); // Kjører den nye dropdown-logikken
           }
         },
-        // Bytt ikon og tekst basert på fanen!
         label: Text(_tabController.index == 1 ? "Nytt Lag" : "Ny Kamp"),
         icon: Icon(_tabController.index == 1 ? Icons.group_add : Icons.sports_score),
         backgroundColor: Colors.blue[900],
@@ -393,25 +406,16 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
       ),
     );
   }
-  
-  // ... (Behold _buildTeamsTab og _buildMatchesTab som de var) ...
-  // Lim inn de to funksjonene fra forrige svar her hvis du slettet dem ved et uhell.
-  
+
+  // --- 6. LISTEVISNINGER (Beholdt som før) ---
   Widget _buildTeamsTab() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('teams')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        
         final teams = snapshot.data!.docs;
-
-        if (teams.isEmpty) {
-          return const Center(child: Text("Ingen lag påmeldt i denne turneringen."));
-        }
-
+        if (teams.isEmpty) return const Center(child: Text("Ingen lag registrert."));
+        
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: teams.length,
@@ -421,14 +425,13 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
               child: ListTile(
                 leading: const Icon(Icons.group),
                 title: Text(data['team_name'] ?? 'Ukjent Lag'),
-                subtitle: Text("${data['player1_name'] ?? ''} & ${data['player2_name'] ?? ''}"),
+                subtitle: Text("${data['player1_name']} & ${data['player2_name']}"),
                 trailing: IconButton(
                   icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () {
-                    // Slett dokumentet fra Firebase
-                    FirebaseFirestore.instance.collection('teams').doc(teams[index].id).delete();
-                  },
-                ),
+                  tooltip: "Slett lag",
+                  // Her bruker vi den nye sikkerhetsfunksjonen
+                  onPressed: () => _confirmDelete(teams[index].id, 'teams', "laget"),
+             ),
               ),
             );
           },
@@ -438,20 +441,13 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
   }
 
   Widget _buildMatchesTab() {
-      return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('matches')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .snapshots(),
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-
         final matches = snapshot.data!.docs;
-
-        if (matches.isEmpty) {
-          return const Center(child: Text("Ingen kamper satt opp enda."));
-        }
-
+        if (matches.isEmpty) return const Center(child: Text("Ingen kamper satt opp enda."));
+        
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: matches.length,
@@ -463,36 +459,29 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
               child: ListTile(
                 leading: const Icon(Icons.sports_volleyball),
                 title: Text("${data['team_a_name']} vs ${data['team_b_name']}"),
-                subtitle: Text("Bane: ${data['court']} • Status: $status"),
+                subtitle: Text("Status: $status"),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // QR-KNAPP
                     IconButton(
-                      icon: const Icon(Icons.qr_code, color: Colors.black),
-                      tooltip: "Vis QR-kode for dommer",
-                      onPressed: () => _showQrDialog(
-                        matches[index].id, 
-                        data['team_a_name'] ?? 'Lag A', 
-                        data['team_b_name'] ?? 'Lag B'
-                      ),
+                      icon: const Icon(Icons.qr_code), 
+                      tooltip: "Vis QR",
+                      onPressed: () => _showQrDialog(matches[index].id, data['team_a_name'] ?? 'Lag A', data['team_b_name'] ?? 'Lag B')
                     ),
                     
-                    // KAMPSTYRING-KNAPP
+                    // KAMPSTYRING
                     IconButton(
                       icon: const Icon(Icons.sports_esports, color: Colors.green),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => MatchControlPage(
-                              matchId: matches[index].id,
-                              teamAName: data['team_a_name'] ?? 'Lag A',
-                              teamBName: data['team_b_name'] ?? 'Lag B',
-                            ),
-                          ),
-                        );
-                      },
+                      tooltip: "Styr kamp",
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => MatchControlPage(matchId: matches[index].id, teamAName: data['team_a_name'] ?? 'Lag A', teamBName: data['team_b_name'] ?? 'Lag B'))),
+                    ),
+
+                    // SLETT-KNAPP (NY!)
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      tooltip: "Slett kamp",
+                      onPressed: () => _confirmDelete(matches[index].id, 'matches', "kampen"),
                     ),
                   ],
                 ),
