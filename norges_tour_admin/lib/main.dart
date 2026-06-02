@@ -5,7 +5,9 @@ import 'firebase_options.dart';
 import 'add_tournament_page.dart';
 import 'tournament_control_page.dart';
 import 'all_players_page.dart';
-
+import 'package:firebase_auth/firebase_auth.dart';
+import 'admin_login_page.dart';
+import 'player_claims_page.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -20,13 +22,64 @@ class AdminApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Norges Tour Admin',
+      title: 'Spike Dunk Admin',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
       ),
-      home: const AdminDashboard(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        if (!snapshot.hasData) {
+          return const AdminLoginPage();
+        }
+        
+        return FutureBuilder<DocumentSnapshot>(
+          future: FirebaseFirestore.instance.collection('admins').doc(snapshot.data!.uid).get(),
+          builder: (context, adminSnapshot) {
+            if (adminSnapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(body: Center(child: CircularProgressIndicator()));
+            }
+            if (adminSnapshot.hasData && adminSnapshot.data!.exists) {
+              return const AdminDashboard();
+            }
+            
+            return Scaffold(
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                    const SizedBox(height: 16),
+                    const Text("Du har ikke admin-tilgang.", style: TextStyle(fontSize: 20)),
+                    const SizedBox(height: 8),
+                    Text("UID: ${snapshot.data!.uid}", style: const TextStyle(color: Colors.grey)),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: () => FirebaseAuth.instance.signOut(),
+                      child: const Text("Logg ut"),
+                    )
+                  ],
+                )
+              )
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -54,7 +107,7 @@ class AdminDashboard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text("Norges Tour Admin", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text("Spike Dunk Admin", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                   Text("Kontrollpanel", style: TextStyle(color: Colors.white70)),
                 ],
               ),
@@ -71,12 +124,32 @@ class AdminDashboard extends StatelessWidget {
               title: const Text('Spillerdatabase'),
               onTap: () {
                 Navigator.pop(context);
-                // VIKTIG ENDRING: Vi bruker pushReplacement for å bytte side helt
-                // Da får vi ingen "tilbake"-pil på neste side
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const AllPlayersPage()),
                 );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_add_alt_1),
+              title: const Text('Ventende Spillerkrav'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const PlayerClaimsPage()),
+                );
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('Logg ut', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                await FirebaseAuth.instance.signOut();
+                if (context.mounted) {
+                  Navigator.pop(context);
+                }
               },
             ),
           ],

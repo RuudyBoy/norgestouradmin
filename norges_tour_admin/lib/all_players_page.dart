@@ -156,7 +156,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text("Norges Tour Admin", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text("Spike Dunk Admin", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                   Text("Spillerdatabase", style: TextStyle(color: Colors.white70)),
                 ],
               ),
