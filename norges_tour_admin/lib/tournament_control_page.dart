@@ -134,7 +134,6 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
 
     if (mounted) {
       Navigator.pop(context); // Fjern lastesirkel
-      Navigator.pop(context); // Fjern dialog
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kamp opprettet med ID-er!")));
     }
   }
@@ -175,37 +174,39 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     String? selectedTeamAId;
     String? selectedTeamBId;
 
+    // Hent streamen utenfor builder for å unngå at den gjenskapes ved hver setState
+    final teamsStream = FirebaseFirestore.instance
+        .collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .snapshots();
+
     showDialog(
       context: context,
       builder: (context) {
-        // Vi bruker StatefulBuilder for å kunne oppdatere dropdowns inne i dialogen
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text("Opprett ny kamp"),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('teams')
-                      .where('tournament_id', isEqualTo: widget.tournamentId)
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                    
-                    final teamDocs = snapshot.data!.docs;
-                    if (teamDocs.isEmpty) return const Text("Ingen lag registrert enda. Gå til 'Lag'-fanen først.");
+        return StreamBuilder<QuerySnapshot>(
+          stream: teamsStream,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) return AlertDialog(content: Text("Feil: ${snapshot.error}"));
+            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+            
+            final teamDocs = snapshot.data!.docs;
+            if (teamDocs.isEmpty) return const AlertDialog(content: Text("Ingen lag registrert enda. Gå til 'Lag'-fanen først."));
 
-                    // Vi lager listen med Items, men verdien er nå doc.id (String)
-                    final teamItems = teamDocs.map((doc) {
-                      final data = doc.data() as Map<String, dynamic>;
-                      return DropdownMenuItem<String>(
-                        value: doc.id, // <--- HER ER FIXEN: Vi bruker ID som verdi
-                        child: Text(data['team_name'] ?? "Ukjent lag"),
-                      );
-                    }).toList();
+            final teamItems = teamDocs.map((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              return DropdownMenuItem<String>(
+                value: doc.id,
+                child: Text(data['team_name'] ?? "Ukjent lag"),
+              );
+            }).toList();
 
-                    return Column(
+            return StatefulBuilder(
+              builder: (context, setState) {
+                return AlertDialog(
+                  title: const Text("Opprett ny kamp"),
+                  content: SizedBox(
+                    width: double.maxFinite,
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         // --- VELG LAG A ---
@@ -236,47 +237,42 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                              child: Text("Klar til å opprette...", style: TextStyle(color: Colors.green)),
                            ),
                       ],
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
-                ElevatedButton(
-                  onPressed: () {
-                    if (selectedTeamAId != null && selectedTeamBId != null) {
-                      if (selectedTeamAId == selectedTeamBId) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Du kan ikke velge samme lag to ganger!")));
-                        return;
-                      }
-
-                      // Nå må vi finne tilbake til selve lag-dataene basert på ID-en
-                      // Dette gjør vi ved å slå opp i snapshotet vi allerede har tilgang til (via en ny spørring eller StreamBuilderen over).
-                      // Men siden vi er utenfor StreamBuilderen her, gjør vi et lite triks:
-                      
-                      FirebaseFirestore.instance.collection('teams').doc(selectedTeamAId).get().then((docA) {
-                        FirebaseFirestore.instance.collection('teams').doc(selectedTeamBId).get().then((docB) {
-                          
-                          if (docA.exists && docB.exists) {
-                            // Vi må legge til ID manuelt i data-mappen siden .data() ikke inkluderer den
-                            Map<String, dynamic> teamAData = docA.data()!;
-                            teamAData['id'] = docA.id;
-                            
-                            Map<String, dynamic> teamBData = docB.data()!;
-                            teamBData['id'] = docB.id;
-
-                            // Start prosessen
-                            _addMatchFromTeams(teamAData, teamBData);
+                    ),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
+                    ElevatedButton(
+                      onPressed: () {
+                        if (selectedTeamAId != null && selectedTeamBId != null) {
+                          if (selectedTeamAId == selectedTeamBId) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Du kan ikke velge samme lag to ganger!")));
+                            return;
                           }
-                        });
-                      });
-                      
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: const Text("Opprett Kamp"),
-                ),
-              ],
+
+                          // Lukk dialogen først for å unngå at en spinner henger igjen eller pop fjerner siden
+                          Navigator.pop(context);
+
+                          FirebaseFirestore.instance.collection('teams').doc(selectedTeamAId).get().then((docA) {
+                            FirebaseFirestore.instance.collection('teams').doc(selectedTeamBId).get().then((docB) {
+                              if (docA.exists && docB.exists) {
+                                Map<String, dynamic> teamAData = docA.data()!;
+                                teamAData['id'] = docA.id;
+                                
+                                Map<String, dynamic> teamBData = docB.data()!;
+                                teamBData['id'] = docB.id;
+
+                                // Start prosessen
+                                _addMatchFromTeams(teamAData, teamBData);
+                              }
+                            });
+                          });
+                        }
+                      },
+                      child: const Text("Opprett Kamp"),
+                    ),
+                  ],
+                );
+              },
             );
           },
         );
@@ -292,11 +288,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     String? selectedPlayer2Id;
     String? selectedPlayer2Name;
 
+    final playersStream = FirebaseFirestore.instance.collection('players').orderBy('first_name').snapshots();
+
     showDialog(
       context: context,
       builder: (context) => StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('players').orderBy('first_name').snapshots(),
+        stream: playersStream,
         builder: (context, snapshot) {
+          if (snapshot.hasError) return AlertDialog(content: Text("Feil: ${snapshot.error}"));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           
           final playerDocs = snapshot.data!.docs;
@@ -321,23 +320,33 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                     children: [
                       TextField(controller: teamNameController, decoration: const InputDecoration(labelText: "Lagnavn")),
                       const SizedBox(height: 15),
-                      DropdownButtonFormField(
+                      DropdownButtonFormField<String>(
                         decoration: const InputDecoration(labelText: "Spiller 1"),
                         items: playerItems,
+                        value: selectedPlayer1Id,
                         onChanged: (val) {
-                          selectedPlayer1Id = val;
-                          final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
-                          selectedPlayer1Name = "${p['first_name']} ${p['last_name']}";
+                          if (val != null) {
+                            setState(() {
+                              selectedPlayer1Id = val;
+                              final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
+                              selectedPlayer1Name = "${p['first_name']} ${p['last_name']}";
+                            });
+                          }
                         },
                       ),
                       const SizedBox(height: 15),
-                      DropdownButtonFormField(
+                      DropdownButtonFormField<String>(
                         decoration: const InputDecoration(labelText: "Spiller 2"),
                         items: playerItems,
+                        value: selectedPlayer2Id,
                         onChanged: (val) {
-                          selectedPlayer2Id = val;
-                          final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
-                          selectedPlayer2Name = "${p['first_name']} ${p['last_name']}";
+                          if (val != null) {
+                            setState(() {
+                              selectedPlayer2Id = val;
+                              final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
+                              selectedPlayer2Name = "${p['first_name']} ${p['last_name']}";
+                            });
+                          }
                         },
                       ),
                     ],

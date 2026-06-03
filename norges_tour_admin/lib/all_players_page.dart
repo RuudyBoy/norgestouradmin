@@ -32,13 +32,6 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
         return StatefulBuilder(
           builder: (context, setState) {
             
-            // En liten lytter som oppdaterer bildet når teksten endres
-            imageUrlController.addListener(() {
-               if (imageUrlController.text.isNotEmpty) {
-                 setState(() {}); 
-               }
-            });
-
             return AlertDialog(
               title: Text(docId != null ? "Rediger spiller" : "Registrer ny spiller"),
               content: SingleChildScrollView(
@@ -80,6 +73,9 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     // --- BILDE URL FELT ---
                     TextField(
                       controller: imageUrlController,
+                      onChanged: (value) {
+                        setState(() {});
+                      },
                       decoration: const InputDecoration(
                         labelText: "Bilde URL (Lim inn lenke)",
                         hintText: "https://eksempel.no/bilde.jpg",

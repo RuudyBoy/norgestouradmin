@@ -11,6 +11,7 @@ class AddTournamentPage extends StatefulWidget {
 class _AddTournamentPageState extends State<AddTournamentPage> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
+  final TextEditingController _imageUrlController = TextEditingController();
   
   // Nå har vi to dato-variabler
   DateTime? _selectedStartDate;
@@ -79,7 +80,8 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
       'name': _nameController.text,
       'location': _locationController.text,
       'start_date': start,
-      'end_date': end,  // <-- Nytt felt!
+      'end_date': end,
+      'image_url': _imageUrlController.text,
       'status': 'upcoming',
       'created_at': FieldValue.serverTimestamp(),
     });
@@ -129,6 +131,17 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                       labelText: "Sted / By",
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.map),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  TextField(
+                    controller: _imageUrlController,
+                    decoration: const InputDecoration(
+                      labelText: "Bilde URL (valgfritt)",
+                      hintText: "https://eksempel.no/bilde.jpg",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.link),
                     ),
                   ),
                   const SizedBox(height: 16),

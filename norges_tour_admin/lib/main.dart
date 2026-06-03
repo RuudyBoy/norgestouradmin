@@ -208,6 +208,7 @@ class AdminDashboard extends StatelessWidget {
               final location = data['location'] ?? 'Ukjent sted';
               final start = data['start_date'] ?? '?';
               final end = data['end_date'] ?? '?';
+              final imageUrl = data['image_url'] ?? '';
 
               return Card(
                 elevation: 2,
@@ -215,8 +216,14 @@ class AdminDashboard extends StatelessWidget {
                 child: ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   leading: CircleAvatar(
+                    radius: 25,
                     backgroundColor: Colors.blue[100],
-                    child: const Icon(Icons.emoji_events, color: Colors.blue),
+                    backgroundImage: imageUrl.isNotEmpty
+                        ? NetworkImage(imageUrl)
+                        : null,
+                    child: imageUrl.isEmpty
+                        ? const Icon(Icons.emoji_events, color: Colors.blue)
+                        : null,
                   ),
                   title: Text(
                     name,
@@ -251,20 +258,70 @@ class AdminDashboard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  trailing: ElevatedButton(
-                    onPressed: () {
-                      // NAVIGER TIL COCKPITEN
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => TournamentControlPage(
-                            tournamentId: id,     // Send ID-en videre
-                            tournamentName: name, // Send navnet videre
-                          ),
-                        ),
-                      );
-                    },
-                    child: const Text("Administrer"),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () {
+                          // NAVIGER TIL COCKPITEN
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => TournamentControlPage(
+                                tournamentId: id,     // Send ID-en videre
+                                tournamentName: name, // Send navnet videre
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text("Administrer"),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        tooltip: 'Slett turnering',
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text("Slett turnering"),
+                              content: Text("Er du sikker på at du vil slette '$name'?\n\nDette kan ikke angres!"),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false),
+                                  child: const Text("Avbryt"),
+                                ),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text("Slett"),
+                                ),
+                              ],
+                            ),
+                          );
+                          
+                          if (confirm == true && context.mounted) {
+                            try {
+                              await FirebaseFirestore.instance.collection('tournaments').doc(id).delete();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text("Turnering '$name' slettet.")),
+                                );
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text("Feil ved sletting: $e")),
+                                );
+                              }
+                            }
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
               );
