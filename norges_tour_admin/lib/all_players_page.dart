@@ -19,6 +19,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
     final TextEditingController clubController = TextEditingController(text: existingData?['club']);
     final TextEditingController heightController = TextEditingController(text: existingData?['height']?.toString());
     final TextEditingController imageUrlController = TextEditingController(text: existingData?['image_url']);
+    final TextEditingController top3Controller = TextEditingController(text: existingData?['top_3']?.toString() ?? '0');
+    final TextEditingController firstPlacesController = TextEditingController(text: existingData?['first_places']?.toString() ?? '0');
 
     String? selectedPosition = existingData?['position'];
     final validPositions = ["Blokker", "Forsvar", "Allround"];
@@ -62,6 +64,12 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                         Expanded(child: TextField(controller: heightController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Høyde (cm)"))),
                     ]),
                     const SizedBox(height: 16),
+                    Row(children: [
+                        Expanded(child: TextField(controller: top3Controller, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Topp 3"))),
+                        const SizedBox(width: 16),
+                        Expanded(child: TextField(controller: firstPlacesController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "1. plasser"))),
+                    ]),
+                    const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: selectedPosition,
                       decoration: const InputDecoration(labelText: "Posisjon"),
@@ -96,6 +104,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     if (firstNameController.text.isNotEmpty && lastNameController.text.isNotEmpty) {
                       
                       int? height = int.tryParse(heightController.text);
+                      int? top3 = int.tryParse(top3Controller.text);
+                      int? firstPlaces = int.tryParse(firstPlacesController.text);
 
                       Map<String, dynamic> playerData = {
                         'first_name': firstNameController.text,
@@ -104,6 +114,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                         'height': height,
                         'position': selectedPosition ?? 'Ukjent',
                         'image_url': imageUrlController.text, // Lagrer bare teksten (URLen)
+                        'top_3': top3 ?? 0,
+                        'first_places': firstPlaces ?? 0,
                       };
 
                       if (docId != null) {
