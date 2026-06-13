@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'match_control_page.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'simulator_logic.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -36,6 +37,40 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
   }
 
   // --- 1. QR DIALOG ---
+  void _showEditPlacementDialog(String teamId, String teamName, int? currentPlacement) {
+    final TextEditingController placementController = TextEditingController(text: currentPlacement?.toString() ?? '');
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text("Endre plassering for $teamName"),
+          content: TextField(
+            controller: placementController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: "Plassering (1-4)",
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
+            ElevatedButton(
+              onPressed: () {
+                int? newPlacement = int.tryParse(placementController.text);
+                FirebaseFirestore.instance.collection('teams').doc(teamId).update({
+                  'group_placement': newPlacement,
+                });
+                Navigator.pop(context);
+              },
+              child: const Text("Lagre"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _showEditSeedDialog(String teamId, String teamName, int? currentSeed) {
     final TextEditingController seedController = TextEditingController(text: currentSeed?.toString() ?? '');
     
@@ -115,7 +150,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
           }
         }
       } catch (e) {
-        print("Kunne ikke hente bilde for $playerId: $e");
+        debugPrint("Kunne ikke hente bilde for $playerId: $e");
       }
       return null;
     }
@@ -247,7 +282,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                         DropdownButtonFormField<String>(
                           decoration: const InputDecoration(labelText: "Hjemmelag (Lag A)", border: OutlineInputBorder()),
                           items: teamItems,
-                          value: selectedTeamAId,
+                          initialValue: selectedTeamAId,
                           onChanged: (value) {
                             setState(() => selectedTeamAId = value);
                           },
@@ -258,7 +293,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                         DropdownButtonFormField<String>(
                           decoration: const InputDecoration(labelText: "Bortelag (Lag B)", border: OutlineInputBorder()),
                           items: teamItems,
-                          value: selectedTeamBId,
+                          initialValue: selectedTeamBId,
                           onChanged: (value) {
                             setState(() => selectedTeamBId = value);
                           },
@@ -317,12 +352,11 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
   // --- 4. LEGG TIL LAG (Beholdt som den var) ---
   void _showAddTeamDialog() {
     String? selectedPlayer1Id;
-    String selectedPlayer1Name = '';
-    String selectedPlayer1Short = '';
     String? selectedPlayer2Id;
-    String selectedPlayer2Name = '';
-    String selectedPlayer2Short = '';
-    final TextEditingController seedController = TextEditingController();
+    String? selectedPlayer1Name;
+    String? selectedPlayer2Name;
+    String? selectedPlayer1Short;
+    String? selectedPlayer2Short;
 
     String getShortName(String firstName, String lastName) {
       String firstInitial = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
@@ -366,7 +400,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                       DropdownButtonFormField<String>(
                         decoration: const InputDecoration(labelText: "Spiller 1"),
                         items: playerItems,
-                        value: selectedPlayer1Id,
+                        initialValue: selectedPlayer1Id,
                         onChanged: (val) {
                           if (val != null) {
                             setState(() {
@@ -382,7 +416,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                       DropdownButtonFormField<String>(
                         decoration: const InputDecoration(labelText: "Spiller 2"),
                         items: playerItems,
-                        value: selectedPlayer2Id,
+                        initialValue: selectedPlayer2Id,
                         onChanged: (val) {
                           if (val != null) {
                             setState(() {
@@ -393,15 +427,6 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                             });
                           }
                         },
-                      ),
-                      const SizedBox(height: 15),
-                      TextField(
-                        controller: seedController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Seeding (1-16, valgfritt)",
-                          border: OutlineInputBorder(),
-                        ),
                       ),
                     ],
                   ),
@@ -422,7 +447,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                         Navigator.pop(context);
 
                         String teamName = "$selectedPlayer1Short/$selectedPlayer2Short";
-                        int? seed = int.tryParse(seedController.text);
+                        
+                        // Hent poeng for begge spillere
+                        final p1Data = playerDocs.firstWhere((d) => d.id == selectedPlayer1Id).data() as Map<String, dynamic>;
+                        final p2Data = playerDocs.firstWhere((d) => d.id == selectedPlayer2Id).data() as Map<String, dynamic>;
+                        
+                        int p1Points = p1Data['ranking_points'] is int ? p1Data['ranking_points'] as int : int.tryParse(p1Data['ranking_points']?.toString() ?? '0') ?? 0;
+                        int p2Points = p2Data['ranking_points'] is int ? p2Data['ranking_points'] as int : int.tryParse(p2Data['ranking_points']?.toString() ?? '0') ?? 0;
+                        int teamPoints = p1Points + p2Points;
 
                         FirebaseFirestore.instance.collection('teams').add({
                           'team_name': teamName,
@@ -431,7 +463,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                           'player1_name': selectedPlayer1Name,
                           'player2_id': selectedPlayer2Id,
                           'player2_name': selectedPlayer2Name,
-                          'seed': seed,
+                          'team_points': teamPoints,
                           'created_at': FieldValue.serverTimestamp(),
                         }).then((_) {
                           if (mounted) {
@@ -496,18 +528,73 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
 
   // --- 6. LISTEVISNINGER (Beholdt som før) ---
   Widget _buildTeamsTab() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        final teams = snapshot.data?.docs ?? [];
-        if (teams.isEmpty) return const Center(child: Text("Ingen lag registrert."));
-        
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: teams.length,
-          itemBuilder: (context, index) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.group_work),
+            label: const Text("Auto-generer 16 lag (fra database)"),
+            onPressed: () async {
+              final scaffold = ScaffoldMessenger.of(context);
+              final playersSnap = await FirebaseFirestore.instance.collection('players').get();
+              final players = playersSnap.docs.toList();
+              
+              if (players.length < 32) {
+                if (mounted) scaffold.showSnackBar(SnackBar(content: Text("Trenger minst 32 spillere i databasen for å lage 16 lag (har ${players.length})")));
+                return;
+              }
+              
+              players.shuffle();
+              WriteBatch batch = FirebaseFirestore.instance.batch();
+              
+              for (int i = 0; i < 16; i++) {
+                final p1 = players[i * 2];
+                final p2 = players[i * 2 + 1];
+                
+                final p1Data = p1.data();
+                final p2Data = p2.data();
+                
+                final p1Points = (p1Data['ranking_points'] as num?)?.toInt() ?? 0;
+                final p2Points = (p2Data['ranking_points'] as num?)?.toInt() ?? 0;
+                
+                final p1Name = "${p1Data['first_name']} ${p1Data['last_name']}".trim();
+                final p2Name = "${p2Data['first_name']} ${p2Data['last_name']}".trim();
+                
+                final p1Short = p1Data['last_name'] ?? p1Data['first_name'] ?? 'Ukjent';
+                final p2Short = p2Data['last_name'] ?? p2Data['first_name'] ?? 'Ukjent';
+                
+                final docRef = FirebaseFirestore.instance.collection('teams').doc();
+                batch.set(docRef, {
+                  'team_name': "$p1Short/$p2Short",
+                  'tournament_id': widget.tournamentId,
+                  'player1_id': p1.id,
+                  'player1_name': p1Name,
+                  'player2_id': p2.id,
+                  'player2_name': p2Name,
+                  'team_points': p1Points + p2Points,
+                  'created_at': FieldValue.serverTimestamp(),
+                });
+              }
+              
+              await batch.commit();
+              if (mounted) scaffold.showSnackBar(const SnackBar(content: Text("16 lag ble generert!")));
+            },
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
+              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+              final teams = snapshot.data?.docs ?? [];
+              if (teams.isEmpty) return const Center(child: Text("Ingen lag registrert."));
+              
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: teams.length,
+                itemBuilder: (context, index) {
             final data = teams[index].data() as Map<String, dynamic>;
             final seed = data.containsKey('seed') ? data['seed'] : null;
             return Card(
@@ -539,12 +626,41 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
           },
         );
       },
+    ),
+    ),
+    ],
     );
   }
 
   Widget _buildMatchesTab() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.auto_awesome),
+            label: const Text("Simuler alle oppsatte kamper (Test)"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple[800],
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              // Viser en snackbar som oppdaterer seg
+              final snackBar = ScaffoldMessenger.of(context);
+              snackBar.showSnackBar(const SnackBar(content: Text("Starter simulering..."), duration: Duration(days: 1)));
+              
+              await MatchSimulator.simulateScheduledMatches(widget.tournamentId, (progress) {
+                 // Her kunne vi brukt en StreamBuilder, men vi lar den være enkel.
+              });
+              
+              snackBar.hideCurrentSnackBar();
+              snackBar.showSnackBar(const SnackBar(content: Text("Simulering fullført!")));
+            },
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -593,7 +709,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
           },
         );
       },
-    );
+    ),
+    ), // Lukk Expanded
+    ],
+    ); // Lukk Column
   }
 
   // --- GRUPPESPILL UI OG LOGIKK ---
@@ -662,8 +781,13 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
                             leading: CircleAvatar(child: Text(placement?.toString() ?? '-')),
                             title: Text(data['team_name'] ?? 'Ukjent Lag'),
                             subtitle: Text("${data['player1_name']} & ${data['player2_name']}"),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              tooltip: "Overstyr plassering",
+                              onPressed: () => _showEditPlacementDialog(t.id, data['team_name'] ?? 'Ukjent Lag', placement),
+                            ),
                           );
-                        }).toList(),
+                        }),
                       ],
                     ),
                   );
@@ -685,14 +809,15 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
       return;
     }
 
-    // Sorter etter seed (de uten seed kommer sist)
+    // Sorter etter team_points (høyeste poengsum får seed 1, osv)
     final sortedTeams = teams.toList();
     sortedTeams.sort((a, b) {
-      final aData = a.data() as Map<String, dynamic>;
-      final bData = b.data() as Map<String, dynamic>;
-      final aSeed = aData.containsKey('seed') ? (aData['seed'] as int?) ?? 999 : 999;
-      final bSeed = bData.containsKey('seed') ? (bData['seed'] as int?) ?? 999 : 999;
-      return aSeed.compareTo(bSeed);
+      final aData = a.data();
+      final bData = b.data();
+      final aPoints = aData.containsKey('team_points') ? (aData['team_points'] as int?) ?? 0 : 0;
+      final bPoints = bData.containsKey('team_points') ? (bData['team_points'] as int?) ?? 0 : 0;
+      // Sorterer synkende (høyest først)
+      return bPoints.compareTo(aPoints);
     });
 
     final selectedTeams = sortedTeams.take(16).toList();
@@ -703,12 +828,12 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     // C: 3, 6, 11, 14
     // D: 4, 5, 12, 13
     
-    List<DocumentSnapshot> groupA = [selectedTeams[0], selectedTeams[7], selectedTeams[8], selectedTeams[15]];
-    List<DocumentSnapshot> groupB = [selectedTeams[1], selectedTeams[6], selectedTeams[9], selectedTeams[14]];
-    List<DocumentSnapshot> groupC = [selectedTeams[2], selectedTeams[5], selectedTeams[10], selectedTeams[13]];
-    List<DocumentSnapshot> groupD = [selectedTeams[3], selectedTeams[4], selectedTeams[11], selectedTeams[12]];
+    final groupA = [selectedTeams[0], selectedTeams[7], selectedTeams[8], selectedTeams[15]];
+    final groupB = [selectedTeams[1], selectedTeams[6], selectedTeams[9], selectedTeams[14]];
+    final groupC = [selectedTeams[2], selectedTeams[5], selectedTeams[10], selectedTeams[13]];
+    final groupD = [selectedTeams[3], selectedTeams[4], selectedTeams[11], selectedTeams[12]];
 
-    Map<String, List<DocumentSnapshot>> groupsMap = {
+    final groupsMap = {
       'A': groupA,
       'B': groupB,
       'C': groupC,
@@ -720,8 +845,15 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     for (String group in groupsMap.keys) {
       final groupTeams = groupsMap[group]!;
       
-      for (var teamDoc in groupTeams) {
-        batch.update(teamDoc.reference, {'group': group, 'group_placement': FieldValue.delete()});
+      for (int i = 0; i < groupTeams.length; i++) {
+        var teamDoc = groupTeams[i];
+        // Finn lagets faktiske seed (index i selectedTeams + 1)
+        int actualSeed = selectedTeams.indexOf(teamDoc) + 1;
+        batch.update(teamDoc.reference, {
+          'group': group, 
+          'group_placement': FieldValue.delete(),
+          'seed': actualSeed,
+        });
       }
 
       // Første kamp: Høyeste seed mot laveste seed i gruppa (index 0 vs index 3)
@@ -969,18 +1101,20 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
   }
 
   Future<void> _generatePlayoffs() async {
-    await _finalizeGroupPlacements();
-    
-    final teamsSnap = await FirebaseFirestore.instance.collection('teams')
-      .where('tournament_id', isEqualTo: widget.tournamentId)
-      .where('group_placement', isNull: false)
-      .get();
+    try {
+      await _finalizeGroupPlacements();
       
-    final teams = teamsSnap.docs;
-    if (teams.length < 16) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trenger alle 16 lag ferdigspilt i grupper for å generere sluttspill.")));
-      return;
-    }
+      final teamsSnap = await FirebaseFirestore.instance.collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('group_placement', isNull: false)
+        .get();
+        
+      final teams = teamsSnap.docs;
+      if (teams.length < 16) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trenger alle 16 lag ferdigspilt i grupper for å generere sluttspill.")));
+        return;
+      }
+
     
     DocumentSnapshot? getTeam(String group, int placement) {
       try {
@@ -1060,6 +1194,13 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
 
     await batch.commit();
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sluttspill opprettet!")));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text("Feil: $e (Sjekk kjørekonsollen for evt. index-lenker)"),
+        duration: const Duration(seconds: 10),
+      ));
+      print("Error in _generatePlayoffs: $e");
+    }
   }
 
   Future<void> _updatePlayoffBracket() async {
@@ -1073,14 +1214,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     int updates = 0;
 
     for (var m in matches) {
-      final data = m.data() as Map<String, dynamic>;
+      final data = m.data();
       Map<String, dynamic> docUpdates = {};
       
       if (data['team_a_id'] == 'placeholder' && data['dependent_on_a'] != null) {
         final depId = data['dependent_on_a'];
         final depA = matches.firstWhere((x) => x.id == depId, orElse: () => m);
-        if (depA.id != m.id && (depA.data() as Map<String, dynamic>)['status'] == 'finished') {
-           final depData = depA.data() as Map<String, dynamic>;
+        if (depA.id != m.id && (depA.data())['status'] == 'finished') {
+           final depData = depA.data();
            final hScore = depData['home_score'] ?? 0;
            final aScore = depData['away_score'] ?? 0;
            final winId = hScore > aScore ? depData['team_a_id'] : depData['team_b_id'];

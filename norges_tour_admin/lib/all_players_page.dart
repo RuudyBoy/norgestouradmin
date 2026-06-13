@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:math';
 import 'main.dart'; // For å kunne navigere tilbake til Dashboard
 
 class AllPlayersPage extends StatefulWidget {
@@ -21,6 +22,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
     final TextEditingController imageUrlController = TextEditingController(text: existingData?['image_url']);
     final TextEditingController top3Controller = TextEditingController(text: existingData?['top_3']?.toString() ?? '0');
     final TextEditingController firstPlacesController = TextEditingController(text: existingData?['first_places']?.toString() ?? '0');
+    final TextEditingController rankingPointsController = TextEditingController(text: existingData?['ranking_points']?.toString() ?? '0');
 
     String? selectedPosition = existingData?['position'];
     final validPositions = ["Blokker", "Forsvar", "Allround"];
@@ -70,6 +72,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                         Expanded(child: TextField(controller: firstPlacesController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "1. plasser"))),
                     ]),
                     const SizedBox(height: 16),
+                    TextField(controller: rankingPointsController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Rankingpoeng")),
+                    const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: selectedPosition,
                       decoration: const InputDecoration(labelText: "Posisjon"),
@@ -106,6 +110,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                       int? height = int.tryParse(heightController.text);
                       int? top3 = int.tryParse(top3Controller.text);
                       int? firstPlaces = int.tryParse(firstPlacesController.text);
+                      int? rankingPoints = int.tryParse(rankingPointsController.text);
 
                       Map<String, dynamic> playerData = {
                         'first_name': firstNameController.text,
@@ -116,20 +121,23 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                         'image_url': imageUrlController.text, // Lagrer bare teksten (URLen)
                         'top_3': top3 ?? 0,
                         'first_places': firstPlaces ?? 0,
+                        'ranking_points': rankingPoints ?? 0,
                       };
 
                       if (docId != null) {
                         // OPPDATER
                         await FirebaseFirestore.instance.collection('players').doc(docId).update(playerData);
-                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Oppdatert!")));
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Oppdatert!")));
                       } else {
                         // NY
                         playerData['created_at'] = FieldValue.serverTimestamp();
                         await FirebaseFirestore.instance.collection('players').add(playerData);
-                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Registrert!")));
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Registrert!")));
                       }
                       
-                      if (mounted) Navigator.of(context).pop();
+                      Navigator.of(context).pop();
                     }
                   },
                   style: ElevatedButton.styleFrom(
@@ -153,6 +161,78 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
         title: const Text("Spillerdatabase"),
         backgroundColor: Colors.green[800],
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person_add_alt_1),
+            tooltip: "Gjør alle anonyme & legg til 20 tullespillere",
+            onPressed: () async {
+              final scaffold = ScaffoldMessenger.of(context);
+              
+              final dummyFirstNames = ["Lars", "Kari", "Peder", "Marte", "Ola", "Espen", "Kåre", "Siri", "Jens", "Nina", "Bjarne", "Hanne", "Simen", "Trine", "Tore", "Lise", "Gisle", "Berit", "Knut", "Inger"];
+              final dummyLastNames = ["Luring", "Karusell", "Ås", "Kirkerud", "Nordmann", "Askeladd", "Bentsen", "Snekker", "Jensen", "Nansen", "Betjent", "Håp", "Svingen", "Trapp", "Tang", "Lotte", "Gris", "Brun", "Knoph", "Isaksen"];
+
+              WriteBatch batch = FirebaseFirestore.instance.batch();
+              
+              // 1. Endre eksisterende spillere (unntatt Christian Jørgensens ruud)
+              final snap = await FirebaseFirestore.instance.collection('players').get();
+              int nameIndex = 0;
+              for (var doc in snap.docs) {
+                final data = doc.data();
+                final fName = data['first_name']?.toString().toLowerCase() ?? '';
+                final lName = data['last_name']?.toString().toLowerCase() ?? '';
+                
+                if (fName.contains('christian') && (lName.contains('ruud') || lName.contains('jørgensen'))) {
+                  continue; // La denne stå
+                }
+                
+                final newFirst = dummyFirstNames[nameIndex % dummyFirstNames.length];
+                final newLast = dummyLastNames[(nameIndex + 5) % dummyLastNames.length];
+                nameIndex++;
+                
+                batch.update(doc.reference, {
+                  'first_name': newFirst,
+                  'last_name': newLast,
+                });
+              }
+
+              // 2. Legg til 20 nye tullespillere
+              for (int i = 0; i < 20; i++) {
+                var docRef = FirebaseFirestore.instance.collection('players').doc();
+                batch.set(docRef, {
+                  "first_name": dummyFirstNames[(i + 7) % dummyFirstNames.length],
+                  "last_name": dummyLastNames[(i + 13) % dummyLastNames.length],
+                  "club": "Tulleklubb IL",
+                  "height": 180 + (i % 20),
+                  "position": i % 2 == 0 ? "Blokker" : "Forsvar",
+                  "top_3": i * 2,
+                  "first_places": i,
+                  "ranking_points": 1000 + (i * 100),
+                  "created_at": FieldValue.serverTimestamp(),
+                  "image_url": "",
+                });
+              }
+
+              await batch.commit();
+              scaffold.showSnackBar(const SnackBar(content: Text("Anonymisert eksisterende og lagt til 20 tullespillere!")));
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.casino),
+            tooltip: "Tilfeldigiser poeng (Test)",
+            onPressed: () async {
+              final scaffold = ScaffoldMessenger.of(context);
+              final snap = await FirebaseFirestore.instance.collection('players').get();
+              final random = Random();
+              WriteBatch batch = FirebaseFirestore.instance.batch();
+              for (var doc in snap.docs) {
+                // Tilfeldig sum mellom 0 og 2000
+                batch.update(doc.reference, {'ranking_points': random.nextInt(2000)});
+              }
+              await batch.commit();
+              scaffold.showSnackBar(const SnackBar(content: Text("Alle spillere fikk tilfeldige poeng!")));
+            },
+          ),
+        ],
       ),
       drawer: Drawer(
         child: ListView(
