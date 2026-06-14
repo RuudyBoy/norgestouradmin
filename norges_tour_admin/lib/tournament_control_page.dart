@@ -175,6 +175,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
       'timestamp': FieldValue.serverTimestamp(),
       'home_score': 0, 
       'away_score': 0,
+      'home_sets': 0,
+      'away_sets': 0,
+      'current_set': 1,
+      'past_sets': [],
 
       // Lag A info
       'team_a_name': teamA['team_name'],
@@ -941,6 +945,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
       'timestamp': FieldValue.serverTimestamp(),
       'home_score': 0, 
       'away_score': 0,
+      'home_sets': 0,
+      'away_sets': 0,
+      'current_set': 1,
+      'past_sets': [],
       'match_type': matchType,
       'group': group,
       'round': round,
@@ -1295,6 +1303,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
       'court': 'TBD',
       'timestamp': FieldValue.serverTimestamp(),
       'home_score': 0, 'away_score': 0,
+      'home_sets': 0, 'away_sets': 0,
+      'current_set': 1, 'past_sets': [],
       'match_type': matchType, 'group': matchName, 'round': 'Sluttspill',
       
       'team_a_name': tA['team_name'], 'team_a_id': teamA.id,
@@ -1315,6 +1325,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
       'court': 'TBD',
       'timestamp': FieldValue.serverTimestamp(),
       'home_score': 0, 'away_score': 0,
+      'home_sets': 0, 'away_sets': 0,
+      'current_set': 1, 'past_sets': [],
       'match_type': matchType, 'group': matchName, 'round': 'Sluttspill',
       
       'team_a_name': pA, 'team_a_id': 'placeholder',
