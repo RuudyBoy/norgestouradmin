@@ -123,62 +123,87 @@ class _MatchControlPageState extends State<MatchControlPage> {
   }
 
   Future<void> _advanceTeamIfPlayoff() async {
-    final doc = await FirebaseFirestore.instance.collection('matches').doc(widget.matchId).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('matches')
+        .doc(widget.matchId)
+        .get();
     final data = doc.data() as Map<String, dynamic>?;
     if (data == null) return;
-    
-    final hScore = data['home_score'] ?? 0;
-    final aScore = data['away_score'] ?? 0;
-    final winId = hScore > aScore ? data['team_a_id'] : data['team_b_id'];
-    final loseId = hScore > aScore ? data['team_b_id'] : data['team_a_id'];
-    
-    if (winId == null || loseId == null || winId == 'placeholder' || loseId == 'placeholder') return;
-    
-    final dependentMatchesSnap = await FirebaseFirestore.instance.collection('matches')
-      .where('tournament_id', isEqualTo: data['tournament_id'])
-      .get();
-      
-    WriteBatch batch = FirebaseFirestore.instance.batch();
-    
-    for (var m in dependentMatchesSnap.docs) {
-      final mData = m.data();
-      Map<String, dynamic> docUpdates = {};
-      
-      if (mData['team_a_id'] == 'placeholder' && mData['dependent_on_a'] == widget.matchId) {
-         final targetId = mData['match_type'] == '5_playoff_bronze' ? loseId : winId;
-         final tDoc = await FirebaseFirestore.instance.collection('teams').doc(targetId).get();
-         if (tDoc.exists) {
-           final tData = tDoc.data()!;
-           docUpdates.addAll({
-             'team_a_id': targetId,
-             'team_a_name': tData['team_name'],
-             'team_a_p1_id': tData['player1_id'],
-             'team_a_p1_name': tData['player1_name'],
-             'team_a_p2_id': tData['player2_id'],
-             'team_a_p2_name': tData['player2_name'],
-           });
-         }
-      }
-      if (mData['team_b_id'] == 'placeholder' && mData['dependent_on_b'] == widget.matchId) {
-         final targetId = mData['match_type'] == '5_playoff_bronze' ? loseId : winId;
-         final tDoc = await FirebaseFirestore.instance.collection('teams').doc(targetId).get();
-         if (tDoc.exists) {
-           final tData = tDoc.data()!;
-           docUpdates.addAll({
-             'team_b_id': targetId,
-             'team_b_name': tData['team_name'],
-             'team_b_p1_id': tData['player1_id'],
-             'team_b_p1_name': tData['player1_name'],
-             'team_b_p2_id': tData['player2_id'],
-             'team_b_p2_name': tData['player2_name'],
-           });
-         }
-      }
-      if (docUpdates.isNotEmpty) {
-        batch.update(m.reference, docUpdates);
-      }
+
+    final stage = data['stage'] as String?;
+    final matchType = data['match_type'] as String?;
+
+    // Determine winner: prefer set count, fall back to point score
+    final hSets = data['home_sets'] as int? ?? 0;
+    final aSets = data['away_sets'] as int? ?? 0;
+    final hScore = data['home_score'] as int? ?? 0;
+    final aScore = data['away_score'] as int? ?? 0;
+    final homeWins = (hSets != aSets) ? hSets > aSets : hScore > aScore;
+
+    // ── Group stage: set placements on teams ─────────────────────────────────
+    if (stage == 'group') {
+      if (matchType != 'group_match_3' && matchType != 'group_match_4') return;
+
+      final winnerId = homeWins
+          ? data['team_a_id'] as String?
+          : data['team_b_id'] as String?;
+      final loserId = homeWins
+          ? data['team_b_id'] as String?
+          : data['team_a_id'] as String?;
+
+      if (winnerId == null || loserId == null) return;
+      if (winnerId == 'placeholder' || loserId == 'placeholder') return;
+
+      final winnerPlace = matchType == 'group_match_3' ? 1 : 3;
+      final loserPlace  = matchType == 'group_match_3' ? 2 : 4;
+
+      final batch = FirebaseFirestore.instance.batch();
+      batch.update(
+          FirebaseFirestore.instance.collection('teams').doc(winnerId),
+          {'group_placement': winnerPlace});
+      batch.update(
+          FirebaseFirestore.instance.collection('teams').doc(loserId),
+          {'group_placement': loserPlace});
+      await batch.commit();
+      return;
     }
-    await batch.commit();
+
+    // ── Playoff stage: advance winner into next match ─────────────────────────
+    if (stage == 'playoff') {
+      final nextMatchId = data['next_match_id'] as String?;
+      final nextMatchSlot = data['next_match_slot'] as String?; // 'a' | 'b'
+
+      if (nextMatchId == null || nextMatchSlot == null) return; // Finale — ingen videre
+
+      final srcPfx = homeWins ? 'team_a' : 'team_b';
+      final dstPfx = nextMatchSlot == 'a' ? 'team_a' : 'team_b';
+      final otherPfx = nextMatchSlot == 'a' ? 'team_b' : 'team_a';
+
+      final updateFields = <String, dynamic>{
+        '${dstPfx}_name':    data['${srcPfx}_name'] ?? '',
+        '${dstPfx}_id':      data['${srcPfx}_id'],
+        '${dstPfx}_p1_name': data['${srcPfx}_p1_name'] ?? '',
+        '${dstPfx}_p1_id':   data['${srcPfx}_p1_id'] ?? '',
+        '${dstPfx}_p2_name': data['${srcPfx}_p2_name'] ?? '',
+        '${dstPfx}_p2_id':   data['${srcPfx}_p2_id'] ?? '',
+      };
+
+      final nextMatchRef =
+          FirebaseFirestore.instance.collection('matches').doc(nextMatchId);
+      final nextMatchDoc = await nextMatchRef.get();
+      if (!nextMatchDoc.exists) return;
+
+      final nextData = nextMatchDoc.data() as Map<String, dynamic>;
+      final otherTeamId = nextData['${otherPfx}_id'] as String?;
+
+      // If the other slot is already a real team, both slots will be filled → scheduled
+      if (otherTeamId != null && otherTeamId != 'placeholder') {
+        updateFields['status'] = 'scheduled';
+      }
+
+      await nextMatchRef.update(updateFields);
+      return;
+    }
   }
 
   void _showEditInfoDialog(BuildContext context) async {

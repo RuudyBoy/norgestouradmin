@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'match_control_page.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'match_control_page.dart';
 import 'simulator_logic.dart';
 
 class TournamentControlPage extends StatefulWidget {
@@ -18,16 +18,16 @@ class TournamentControlPage extends StatefulWidget {
   State<TournamentControlPage> createState() => _TournamentControlPageState();
 }
 
-class _TournamentControlPageState extends State<TournamentControlPage> with SingleTickerProviderStateMixin {
+class _TournamentControlPageState extends State<TournamentControlPage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  String? _selectedCategoryId;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() {
-      setState(() {});
-    });
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() => setState(() {}));
   }
 
   @override
@@ -36,460 +36,861 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     super.dispose();
   }
 
-  // --- 1. QR DIALOG ---
-  void _showEditPlacementDialog(String teamId, String teamName, int? currentPlacement) {
-    final TextEditingController placementController = TextEditingController(text: currentPlacement?.toString() ?? '');
-    
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text("Endre plassering for $teamName"),
-          content: TextField(
-            controller: placementController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: "Plassering (1-4)",
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
-            ElevatedButton(
-              onPressed: () {
-                int? newPlacement = int.tryParse(placementController.text);
-                FirebaseFirestore.instance.collection('teams').doc(teamId).update({
-                  'group_placement': newPlacement,
-                });
-                Navigator.pop(context);
-              },
-              child: const Text("Lagre"),
-            ),
-          ],
-        );
-      },
-    );
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  void _snack(String msg, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: isError ? Colors.red[700] : null,
+    ));
   }
 
-  void _showEditSeedDialog(String teamId, String teamName, int? currentSeed) {
-    final TextEditingController seedController = TextEditingController(text: currentSeed?.toString() ?? '');
-    
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text("Endre seeding for $teamName"),
-          content: TextField(
-            controller: seedController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: "Seeding (1-16)",
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
-            ElevatedButton(
-              onPressed: () {
-                int? newSeed = int.tryParse(seedController.text);
-                FirebaseFirestore.instance.collection('teams').doc(teamId).update({
-                  'seed': newSeed,
-                });
-                Navigator.pop(context);
-              },
-              child: const Text("Lagre"),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showQrDialog(String matchId, String teamA, String teamB) {
-    // HUSK: Bytt til din ekte web-app link!
-    String scorekeeperUrl = "https://spikedunk.web.app/?matchId=$matchId";
-    
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text("Dommer QR-kode"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("Scan for å styre kampen:\n$teamA vs $teamB", textAlign: TextAlign.center),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 200, width: 200,
-                child: QrImageView(data: scorekeeperUrl, version: QrVersions.auto, size: 200.0),
-              ),
-              const SizedBox(height: 20),
-              SelectableText(scorekeeperUrl, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-            ],
-          ),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("Lukk"))],
-        );
-      },
-    );
-  }
-
-  // --- 2. NY LOGIKK: HENT BILDER OG LAGRE KAMP ---
-// --- 2. NY LOGIKK: HENT BILDER OG LAGRE KAMP (MED ID) ---
-  Future<void> _addMatchFromTeams(Map<String, dynamic> teamA, Map<String, dynamic> teamB) async {
-    
-    // Hjelpefunksjon for å hente bilde-URL
-    Future<String?> getImageUrl(String? playerId) async {
-      if (playerId == null) return null;
-      try {
-        final doc = await FirebaseFirestore.instance.collection('players').doc(playerId).get();
-        if (doc.exists && doc.data() != null) {
-          // Sjekk om feltet 'image_url' finnes, hvis ikke returner null
-          final data = doc.data()!;
-          if (data.containsKey('image_url')) {
-             return data['image_url'] as String?;
-          }
-        }
-      } catch (e) {
-        debugPrint("Kunne ikke hente bilde for $playerId: $e");
-      }
-      return null;
-    }
-
-    showDialog(
-      context: context, 
-      barrierDismissible: false, 
-      builder: (c) => const Center(child: CircularProgressIndicator())
-    );
-
-    // Hent bilder
-    final p1AImg = await getImageUrl(teamA['player1_id']);
-    final p2AImg = await getImageUrl(teamA['player2_id']);
-    final p1BImg = await getImageUrl(teamB['player1_id']);
-    final p2BImg = await getImageUrl(teamB['player2_id']);
-
-    // Lagre kampen med ID-er
-    await FirebaseFirestore.instance.collection('matches').add({
+  Map<String, dynamic> _buildGroupMatch({
+    required String groupName,
+    required String matchType,
+    required DocumentSnapshot teamA,
+    required DocumentSnapshot teamB,
+  }) {
+    final tA = teamA.data() as Map<String, dynamic>;
+    final tB = teamB.data() as Map<String, dynamic>;
+    return {
       'tournament_id': widget.tournamentId,
+      'category_id': _selectedCategoryId,
+      'stage': 'group',
+      'group': groupName,
+      'match_type': matchType,
       'status': 'scheduled',
-      'court': 'Hovedbane',
+      'court': 'TBD',
       'timestamp': FieldValue.serverTimestamp(),
-      'home_score': 0, 
+      'home_score': 0,
       'away_score': 0,
       'home_sets': 0,
       'away_sets': 0,
       'current_set': 1,
       'past_sets': [],
+      'team_a_name': tA['team_name'] ?? 'Ukjent',
+      'team_a_id': teamA.id,
+      'team_a_p1_name': tA['player1_name'] ?? '',
+      'team_a_p1_id': tA['player1_id'] ?? '',
+      'team_a_p2_name': tA['player2_name'] ?? '',
+      'team_a_p2_id': tA['player2_id'] ?? '',
+      'team_b_name': tB['team_name'] ?? 'Ukjent',
+      'team_b_id': teamB.id,
+      'team_b_p1_name': tB['player1_name'] ?? '',
+      'team_b_p1_id': tB['player1_id'] ?? '',
+      'team_b_p2_name': tB['player2_name'] ?? '',
+      'team_b_p2_id': tB['player2_id'] ?? '',
+    };
+  }
 
-      // Lag A info
-      'team_a_name': teamA['team_name'],
-      'team_a_id': teamA['id'],
-      
-      'team_a_p1_name': teamA['player1_name'],
-      'team_a_p1_id': teamA['player1_id'],   // <--- NYTT: Lagrer ID
-      'team_a_p1_img': p1AImg,
-      
-      'team_a_p2_name': teamA['player2_name'],
-      'team_a_p2_id': teamA['player2_id'],   // <--- NYTT: Lagrer ID
-      'team_a_p2_img': p2AImg,
+  // ─── Team dialogs ──────────────────────────────────────────────────────────
 
-      // Lag B info
-      'team_b_name': teamB['team_name'],
-      'team_b_id': teamB['id'],
-      
-      'team_b_p1_name': teamB['player1_name'],
-      'team_b_p1_id': teamB['player1_id'],   // <--- NYTT: Lagrer ID
-      'team_b_p1_img': p1BImg,
-      
-      'team_b_p2_name': teamB['player2_name'],
-      'team_b_p2_id': teamB['player2_id'],   // <--- NYTT: Lagrer ID
-      'team_b_p2_img': p2BImg,
-    });
+  void _showAddTeamDialog() {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
 
-    if (mounted) {
-      Navigator.pop(context); // Fjern lastesirkel
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kamp opprettet med ID-er!")));
+    String? p1Id, p2Id, p1Name, p2Name, p1Short, p2Short;
+
+    String shortName(String first, String last) =>
+        "${first.isNotEmpty ? first[0].toUpperCase() : ''}.$last";
+
+    final playersStream =
+        FirebaseFirestore.instance.collection('players').orderBy('first_name').snapshots();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StreamBuilder<QuerySnapshot>(
+        stream: playersStream,
+        builder: (ctx, snap) {
+          if (!snap.hasData) return const AlertDialog(content: SizedBox(height: 60, child: Center(child: CircularProgressIndicator())));
+          final docs = snap.data!.docs;
+          if (docs.isEmpty) return AlertDialog(content: const Text("Ingen spillere i databasen."), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Lukk"))]);
+
+          final items = docs.map((d) {
+            final data = d.data() as Map<String, dynamic>;
+            return DropdownMenuItem<String>(
+              value: d.id,
+              child: Text("${data['first_name']} ${data['last_name']}"),
+            );
+          }).toList();
+
+          return StatefulBuilder(builder: (ctx, setDlg) => AlertDialog(
+            title: const Text("Registrer nytt lag"),
+            content: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: "Spiller 1", border: OutlineInputBorder()),
+                  items: items,
+                  initialValue: p1Id,
+                  onChanged: (v) {
+                    if (v == null) return;
+                    final d = docs.firstWhere((d) => d.id == v).data() as Map<String, dynamic>;
+                    setDlg(() {
+                      p1Id = v;
+                      p1Name = "${d['first_name']} ${d['last_name']}";
+                      p1Short = shortName(d['first_name'] ?? '', d['last_name'] ?? '');
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: "Spiller 2", border: OutlineInputBorder()),
+                  items: items,
+                  initialValue: p2Id,
+                  onChanged: (v) {
+                    if (v == null) return;
+                    final d = docs.firstWhere((d) => d.id == v).data() as Map<String, dynamic>;
+                    setDlg(() {
+                      p2Id = v;
+                      p2Name = "${d['first_name']} ${d['last_name']}";
+                      p2Short = shortName(d['first_name'] ?? '', d['last_name'] ?? '');
+                    });
+                  },
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
+              ElevatedButton(
+                onPressed: () {
+                  if (p1Id == null || p2Id == null) { _snack("Velg begge spillere!"); return; }
+                  if (p1Id == p2Id) { _snack("Velg to forskjellige spillere!"); return; }
+                  final messenger = ScaffoldMessenger.of(context);
+                  Navigator.pop(ctx);
+
+                  final p1Data = docs.firstWhere((d) => d.id == p1Id).data() as Map<String, dynamic>;
+                  final p2Data = docs.firstWhere((d) => d.id == p2Id).data() as Map<String, dynamic>;
+                  final pts1 = (p1Data['ranking_points'] as num?)?.toInt() ?? 0;
+                  final pts2 = (p2Data['ranking_points'] as num?)?.toInt() ?? 0;
+
+                  FirebaseFirestore.instance.collection('teams').add({
+                    'tournament_id': widget.tournamentId,
+                    'category_id': _selectedCategoryId,
+                    'team_name': "$p1Short/$p2Short",
+                    'player1_id': p1Id,
+                    'player1_name': p1Name,
+                    'player2_id': p2Id,
+                    'player2_name': p2Name,
+                    'team_points': pts1 + pts2,
+                    'created_at': FieldValue.serverTimestamp(),
+                  }).then((_) => messenger.showSnackBar(const SnackBar(content: Text("Lag lagt til!"))));
+                },
+                child: const Text("Lagre"),
+              ),
+            ],
+          ));
+        },
+      ),
+    );
+  }
+
+  Future<void> _autoGenerateTeams() async {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    final snap = await FirebaseFirestore.instance.collection('players').get();
+    final players = snap.docs.toList()..shuffle();
+    if (players.length < 32) {
+      _snack("Trenger minst 32 spillere i databasen (har ${players.length}).", isError: true);
+      return;
+    }
+    final batch = FirebaseFirestore.instance.batch();
+    for (int i = 0; i < 16; i++) {
+      final p1 = players[i * 2].data();
+      final p2 = players[i * 2 + 1].data();
+      final pts1 = (p1['ranking_points'] as num?)?.toInt() ?? 0;
+      final pts2 = (p2['ranking_points'] as num?)?.toInt() ?? 0;
+      final s1 = p1['last_name'] ?? p1['first_name'] ?? 'X';
+      final s2 = p2['last_name'] ?? p2['first_name'] ?? 'X';
+      batch.set(FirebaseFirestore.instance.collection('teams').doc(), {
+        'tournament_id': widget.tournamentId,
+        'category_id': _selectedCategoryId,
+        'team_name': "$s1/$s2",
+        'player1_id': players[i * 2].id,
+        'player1_name': "${p1['first_name']} ${p1['last_name']}".trim(),
+        'player2_id': players[i * 2 + 1].id,
+        'player2_name': "${p2['first_name']} ${p2['last_name']}".trim(),
+        'team_points': pts1 + pts2,
+        'created_at': FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
+    _snack("16 lag generert!");
+  }
+
+  void _confirmDeleteTeam(String teamId, String name) {
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: Text("Slett $name?"),
+      content: const Text("Er du sikker?"),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+          onPressed: () {
+            FirebaseFirestore.instance.collection('teams').doc(teamId).delete();
+            Navigator.pop(ctx);
+          },
+          child: const Text("Slett"),
+        ),
+      ],
+    ));
+  }
+
+  void _showQrDialog(String matchId, String a, String b) {
+    final url = "https://spikedunk.web.app/?matchId=$matchId";
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: const Text("Dommer QR-kode"),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text("$a vs $b", textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        SizedBox(height: 200, width: 200, child: QrImageView(data: url, version: QrVersions.auto, size: 200)),
+        const SizedBox(height: 12),
+        SelectableText(url, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Lukk"))],
+    ));
+  }
+
+  // ─── Group stage logic ─────────────────────────────────────────────────────
+
+  Future<void> _generateGroupStage() async {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+
+    final snap = await FirebaseFirestore.instance
+        .collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .get();
+
+    final teams = snap.docs;
+    if (teams.length < 4) {
+      _snack("Trenger minst 4 lag for å generere grupper (har ${teams.length}).", isError: true);
+      return;
+    }
+
+    // Check if groups already generated
+    final existingMatches = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('stage', isEqualTo: 'group')
+        .get();
+    if (existingMatches.docs.isNotEmpty) {
+      _snack("Grupper er allerede generert. Slett eksisterende kamper først.", isError: true);
+      return;
+    }
+
+    // Sort by team_points descending → Seed 1 = høyest poeng
+    final sorted = List<DocumentSnapshot>.from(teams)
+      ..sort((a, b) {
+        final ap = (a.data() as Map)['team_points'] as num? ?? 0;
+        final bp = (b.data() as Map)['team_points'] as num? ?? 0;
+        return bp.compareTo(ap);
+      });
+
+    // Dynamic number of groups: prefer groups of 4
+    final numGroups = (sorted.length / 4).ceil();
+
+    // Serpentine seeding across N groups
+    final groupLists = List.generate(numGroups, (_) => <DocumentSnapshot>[]);
+    for (int i = 0; i < sorted.length; i++) {
+      final row = i ~/ numGroups;
+      final col = i % numGroups;
+      final groupIdx = (row % 2 == 0) ? col : (numGroups - 1 - col);
+      groupLists[groupIdx].add(sorted[i]);
+    }
+
+    final batch = FirebaseFirestore.instance.batch();
+
+    for (int g = 0; g < numGroups; g++) {
+      final groupName = String.fromCharCode(65 + g); // A, B, C, ...
+      final gTeams = groupLists[g];
+
+      // Assign global seed and group to each team
+      for (int t = 0; t < gTeams.length; t++) {
+        final globalSeed = sorted.indexOf(gTeams[t]) + 1;
+        batch.update(gTeams[t].reference, {
+          'group': groupName,
+          'seed': globalSeed,
+          'group_placement': FieldValue.delete(),
+        });
+      }
+
+      // Modified Pool Play — Kamp 1: Seed 1 vs Seed 4 (høyest vs lavest)
+      if (gTeams.length >= 2) {
+        final m1Ref = FirebaseFirestore.instance.collection('matches').doc();
+        final seed1 = gTeams[0];
+        final seed4 = gTeams.length >= 4 ? gTeams[3] : gTeams[gTeams.length - 1];
+        batch.set(m1Ref, _buildGroupMatch(
+          groupName: groupName,
+          matchType: 'group_match_1',
+          teamA: seed1,
+          teamB: seed4,
+        ));
+      }
+
+      // Modified Pool Play — Kamp 2: Seed 2 vs Seed 3 (de to midterste)
+      if (gTeams.length >= 3) {
+        final m2Ref = FirebaseFirestore.instance.collection('matches').doc();
+        batch.set(m2Ref, _buildGroupMatch(
+          groupName: groupName,
+          matchType: 'group_match_2',
+          teamA: gTeams[1],
+          teamB: gTeams[2],
+        ));
+      }
+    }
+
+    await batch.commit();
+    _snack("Grupper generert! $numGroups puljer med serpentine-seeding.");
+  }
+
+  Future<void> _generateGroupRound2() async {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+
+    final finishedSnap = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('stage', isEqualTo: 'group')
+        .where('status', isEqualTo: 'finished')
+        .get();
+
+    final finished = finishedSnap.docs;
+    final groups = finished
+        .map((m) => (m.data() as Map)['group'] as String?)
+        .whereType<String>()
+        .toSet();
+
+    if (groups.isEmpty) {
+      _snack("Ingen ferdige kamper funnet. Spill Runde 1 først.", isError: true);
+      return;
+    }
+
+    final batch = FirebaseFirestore.instance.batch();
+    int added = 0;
+
+    for (final groupName in groups) {
+      // Skip if round 2 already exists for this group
+      final r2Snap = await FirebaseFirestore.instance
+          .collection('matches')
+          .where('tournament_id', isEqualTo: widget.tournamentId)
+          .where('group', isEqualTo: groupName)
+          .where('stage', isEqualTo: 'group')
+          .get();
+      final hasR2 = r2Snap.docs.any((m) {
+        final t = (m.data() as Map)['match_type'] as String? ?? '';
+        return t == 'group_match_3' || t == 'group_match_4';
+      });
+      if (hasR2) continue;
+
+      final m1List = finished.where((m) =>
+          (m.data() as Map)['group'] == groupName &&
+          (m.data() as Map)['match_type'] == 'group_match_1').toList();
+      final m2List = finished.where((m) =>
+          (m.data() as Map)['group'] == groupName &&
+          (m.data() as Map)['match_type'] == 'group_match_2').toList();
+
+      if (m1List.isEmpty || m2List.isEmpty) continue;
+
+      final m1 = Map<String, dynamic>.from(m1List.first.data() as Map);
+      final m2 = Map<String, dynamic>.from(m2List.first.data() as Map);
+
+      bool homeWins(Map d) => (d['home_score'] as int? ?? 0) > (d['away_score'] as int? ?? 0);
+
+      final m1WinnerId = homeWins(m1) ? m1['team_a_id'] : m1['team_b_id'];
+      final m1LoserId  = homeWins(m1) ? m1['team_b_id'] : m1['team_a_id'];
+      final m2WinnerId = homeWins(m2) ? m2['team_a_id'] : m2['team_b_id'];
+      final m2LoserId  = homeWins(m2) ? m2['team_b_id'] : m2['team_a_id'];
+
+      final winA  = await FirebaseFirestore.instance.collection('teams').doc(m1WinnerId as String).get();
+      final winB  = await FirebaseFirestore.instance.collection('teams').doc(m2WinnerId as String).get();
+      final loseA = await FirebaseFirestore.instance.collection('teams').doc(m1LoserId as String).get();
+      final loseB = await FirebaseFirestore.instance.collection('teams').doc(m2LoserId as String).get();
+
+      if (!winA.exists || !winB.exists || !loseA.exists || !loseB.exists) continue;
+
+      // Kamp 3 (Vinnerkampen): Winner M1 vs Winner M2 → 1./2. plass
+      batch.set(
+        FirebaseFirestore.instance.collection('matches').doc(),
+        _buildGroupMatch(groupName: groupName, matchType: 'group_match_3', teamA: winA, teamB: winB),
+      );
+
+      // Kamp 4 (Taperkampen): Loser M1 vs Loser M2 → 3./4. plass
+      batch.set(
+        FirebaseFirestore.instance.collection('matches').doc(),
+        _buildGroupMatch(groupName: groupName, matchType: 'group_match_4', teamA: loseA, teamB: loseB),
+      );
+
+      added += 2;
+    }
+
+    if (added > 0) {
+      await batch.commit();
+      _snack("Runde 2 satt opp for $added kamper!");
+    } else {
+      _snack("Ingen nye grupper klare for Runde 2 ennå.");
     }
   }
 
-  // --- NY FUNKSJON: BEKREFT SLETTING ---
-  void _confirmDelete(String docId, String collection, String title) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text("Slett $title?"),
-          content: const Text("Er du sikker? Dette kan ikke angres."),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context), // Lukk vindu (Nei)
-              child: const Text("Avbryt"),
+  Future<void> _finalizePlacements() async {
+    if (_selectedCategoryId == null) return;
+
+    final finishedSnap = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('stage', isEqualTo: 'group')
+        .where('status', isEqualTo: 'finished')
+        .get();
+
+    final batch = FirebaseFirestore.instance.batch();
+    int updated = 0;
+
+    for (final m in finishedSnap.docs) {
+      final d = Map<String, dynamic>.from(m.data() as Map);
+      final mType = d['match_type'] as String? ?? '';
+      if (mType != 'group_match_3' && mType != 'group_match_4') continue;
+
+      final homeWins = (d['home_score'] as int? ?? 0) > (d['away_score'] as int? ?? 0);
+      final winnerId = homeWins ? d['team_a_id'] : d['team_b_id'];
+      final loserId  = homeWins ? d['team_b_id'] : d['team_a_id'];
+
+      final winPlace  = mType == 'group_match_3' ? 1 : 3;
+      final losePlace = mType == 'group_match_3' ? 2 : 4;
+
+      batch.update(FirebaseFirestore.instance.collection('teams').doc(winnerId as String), {'group_placement': winPlace});
+      batch.update(FirebaseFirestore.instance.collection('teams').doc(loserId  as String), {'group_placement': losePlace});
+      updated += 2;
+    }
+
+    if (updated > 0) {
+      await batch.commit();
+      _snack("Plasseringer beregnet for $updated lag.");
+    } else {
+      _snack("Ingen ferdige Runde 2-kamper funnet.");
+    }
+  }
+
+  Future<void> _simulateAll() async {
+    final snackCtrl = ScaffoldMessenger.of(context);
+    snackCtrl.showSnackBar(const SnackBar(content: Text("Simulerer alle oppsatte kamper..."), duration: Duration(minutes: 2)));
+    await MatchSimulator.simulateScheduledMatches(widget.tournamentId, (_) {});
+    snackCtrl.hideCurrentSnackBar();
+    snackCtrl.showSnackBar(const SnackBar(content: Text("Simulering fullført!")));
+  }
+
+  // ─── Playoff logic ─────────────────────────────────────────────────────────
+
+  Future<void> _generatePlayoffs() async {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+
+    final teamsSnap = await FirebaseFirestore.instance
+        .collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .get();
+    final allTeams = teamsSnap.docs;
+
+    if (allTeams.any((t) => (t.data() as Map)['group_placement'] == null)) {
+      _snack("Alle lag må ha plasseringer. Kjør \"Beregn Plasseringer\" under Grupper-fanen.", isError: true);
+      return;
+    }
+
+    final groupNames = allTeams
+        .map((t) => (t.data() as Map)['group'] as String?)
+        .whereType<String>()
+        .toSet()
+        .toList()
+      ..sort();
+    final numGroups = groupNames.length;
+
+    if (numGroups != 4 && numGroups != 8) {
+      _snack("Støtter 4 eller 8 grupper (har $numGroups grupper).", isError: true);
+      return;
+    }
+
+    final existing = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('stage', isEqualTo: 'playoff')
+        .get();
+    if (existing.docs.isNotEmpty) {
+      _snack("Sluttspill er allerede generert.", isError: true);
+      return;
+    }
+
+    final db = FirebaseFirestore.instance;
+    final List<int> nums = numGroups == 4
+        ? [101,102,103,104,105,106,107,201,202,203,301,302,303]
+        : [101,102,103,104,105,106,107,108,109,110,111,201,202,203,204,205,206,207,301,302,303,304,305,306,307];
+    final refs = <int, DocumentReference>{for (final n in nums) n: db.collection('matches').doc()};
+
+    // ── Slot helpers ─────────────────────────────────────────────────────────
+
+    DocumentSnapshot? teamAt(String group, int placement) {
+      try {
+        return allTeams.firstWhere((t) {
+          final d = t.data() as Map;
+          return d['group'] == group && d['group_placement'] == placement;
+        });
+      } catch (_) { return null; }
+    }
+
+    Map<String, dynamic> realSlot(String px, DocumentSnapshot team) {
+      final d = team.data() as Map<String, dynamic>;
+      return {
+        '${px}_name': d['team_name'] ?? '',
+        '${px}_id': team.id,
+        '${px}_p1_name': d['player1_name'] ?? '',
+        '${px}_p1_id': d['player1_id'] ?? '',
+        '${px}_p2_name': d['player2_name'] ?? '',
+        '${px}_p2_id': d['player2_id'] ?? '',
+      };
+    }
+
+    Map<String, dynamic> phSlot(String px, String ph) =>
+        {'${px}_name': ph, '${px}_id': 'placeholder'};
+
+    Map<String, dynamic> groupSlot(String px, String group, int place) {
+      final team = teamAt(group, place);
+      final placeStr = place == 1 ? '1st' : place == 2 ? '2nd' : place == 3 ? '3rd' : '4th';
+      return team != null ? realSlot(px, team) : phSlot(px, '${placeStr}_Place_Pool_$group');
+    }
+
+    Map<String, dynamic> winSlot(String px, int fromNum) => {
+      '${px}_name': 'Vinner Kamp $fromNum',
+      '${px}_id': 'placeholder',
+      '${px}_from_match': refs[fromNum]!.id,
+    };
+
+    Map<String, dynamic> mkMatch({
+      required String bracket,
+      required String round,
+      required int num,
+      required Map<String, dynamic> aSlot,
+      required Map<String, dynamic> bSlot,
+      int? nextNum,
+      String? nextSlot,
+    }) {
+      final isPending = aSlot['team_a_id'] == 'placeholder' || bSlot['team_b_id'] == 'placeholder';
+      return {
+        'tournament_id': widget.tournamentId,
+        'category_id': _selectedCategoryId,
+        'stage': 'playoff',
+        'bracket': bracket,
+        'round': round,
+        'match_number': num,
+        'status': isPending ? 'pending' : 'scheduled',
+        'court': 'TBD',
+        'timestamp': FieldValue.serverTimestamp(),
+        'home_score': 0, 'away_score': 0,
+        'home_sets': 0, 'away_sets': 0,
+        'current_set': 1, 'past_sets': [],
+        if (nextNum != null) 'next_match_id': refs[nextNum]!.id,
+        if (nextSlot != null) 'next_match_slot': nextSlot,
+        ...aSlot,
+        ...bSlot,
+      };
+    }
+
+    // ── Build bracket ────────────────────────────────────────────────────────
+
+    final batch = db.batch();
+    final g = groupNames;
+
+    if (numGroups == 4) {
+      // A-bracket: QF (seed1 vs seed8 format) → SF → Finale
+      // Half 1: seed1(g[0]) and seed4(g[3]) → 1stA/2ndD path
+      // Half 2: seed2(g[1]) and seed3(g[2]) → 1stB/2ndC path
+      batch.set(refs[101]!, mkMatch(bracket:'A', round:'qf', num:101, nextNum:105, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 1), bSlot: groupSlot('team_b', g[3], 2)));
+      batch.set(refs[102]!, mkMatch(bracket:'A', round:'qf', num:102, nextNum:105, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 1), bSlot: groupSlot('team_b', g[0], 2)));
+      batch.set(refs[103]!, mkMatch(bracket:'A', round:'qf', num:103, nextNum:106, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 1), bSlot: groupSlot('team_b', g[2], 2)));
+      batch.set(refs[104]!, mkMatch(bracket:'A', round:'qf', num:104, nextNum:106, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 1), bSlot: groupSlot('team_b', g[1], 2)));
+      batch.set(refs[105]!, mkMatch(bracket:'A', round:'sf', num:105, nextNum:107, nextSlot:'a',
+          aSlot: winSlot('team_a', 101), bSlot: winSlot('team_b', 102)));
+      batch.set(refs[106]!, mkMatch(bracket:'A', round:'sf', num:106, nextNum:107, nextSlot:'b',
+          aSlot: winSlot('team_a', 103), bSlot: winSlot('team_b', 104)));
+      batch.set(refs[107]!, mkMatch(bracket:'A', round:'final', num:107,
+          aSlot: winSlot('team_a', 105), bSlot: winSlot('team_b', 106)));
+
+      // B-bracket: SF → Finale (4 lag, 3. plasserte)
+      batch.set(refs[201]!, mkMatch(bracket:'B', round:'sf', num:201, nextNum:203, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[3], 3)));
+      batch.set(refs[202]!, mkMatch(bracket:'B', round:'sf', num:202, nextNum:203, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[2], 3)));
+      batch.set(refs[203]!, mkMatch(bracket:'B', round:'final', num:203,
+          aSlot: winSlot('team_a', 201), bSlot: winSlot('team_b', 202)));
+
+      // C-bracket: SF → Finale (4 lag, 4. plasserte)
+      batch.set(refs[301]!, mkMatch(bracket:'C', round:'sf', num:301, nextNum:303, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[3], 4)));
+      batch.set(refs[302]!, mkMatch(bracket:'C', round:'sf', num:302, nextNum:303, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[2], 4)));
+      batch.set(refs[303]!, mkMatch(bracket:'C', round:'final', num:303,
+          aSlot: winSlot('team_a', 301), bSlot: winSlot('team_b', 302)));
+
+    } else {
+      // 8 grupper — A-bracket med 4 Byes (g[0]–g[3] = A–D, g[4]–g[7] = E–H)
+      // R16: nedre halvdel spiller seg opp til KF
+      batch.set(refs[101]!, mkMatch(bracket:'A', round:'r16', num:101, nextNum:106, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[4], 1), bSlot: groupSlot('team_b', g[3], 2)));
+      batch.set(refs[102]!, mkMatch(bracket:'A', round:'r16', num:102, nextNum:105, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[7], 1), bSlot: groupSlot('team_b', g[0], 2)));
+      batch.set(refs[103]!, mkMatch(bracket:'A', round:'r16', num:103, nextNum:108, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[5], 1), bSlot: groupSlot('team_b', g[2], 2)));
+      batch.set(refs[104]!, mkMatch(bracket:'A', round:'r16', num:104, nextNum:107, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[6], 1), bSlot: groupSlot('team_b', g[1], 2)));
+      // KF: 1stA og 1stB på HVER SIN HALVDEL (møtes aldri før Finale)
+      batch.set(refs[105]!, mkMatch(bracket:'A', round:'qf', num:105, nextNum:109, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 1), bSlot: winSlot('team_b', 102)));
+      batch.set(refs[106]!, mkMatch(bracket:'A', round:'qf', num:106, nextNum:109, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 1), bSlot: winSlot('team_b', 101)));
+      batch.set(refs[107]!, mkMatch(bracket:'A', round:'qf', num:107, nextNum:110, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 1), bSlot: winSlot('team_b', 104)));
+      batch.set(refs[108]!, mkMatch(bracket:'A', round:'qf', num:108, nextNum:110, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 1), bSlot: winSlot('team_b', 103)));
+      batch.set(refs[109]!, mkMatch(bracket:'A', round:'sf', num:109, nextNum:111, nextSlot:'a',
+          aSlot: winSlot('team_a', 105), bSlot: winSlot('team_b', 106)));
+      batch.set(refs[110]!, mkMatch(bracket:'A', round:'sf', num:110, nextNum:111, nextSlot:'b',
+          aSlot: winSlot('team_a', 107), bSlot: winSlot('team_b', 108)));
+      batch.set(refs[111]!, mkMatch(bracket:'A', round:'final', num:111,
+          aSlot: winSlot('team_a', 109), bSlot: winSlot('team_b', 110)));
+
+      // B-bracket: KF → SF → Finale (8 lag, 3. plasserte)
+      batch.set(refs[201]!, mkMatch(bracket:'B', round:'qf', num:201, nextNum:205, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[7], 3)));
+      batch.set(refs[202]!, mkMatch(bracket:'B', round:'qf', num:202, nextNum:205, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 3), bSlot: groupSlot('team_b', g[4], 3)));
+      batch.set(refs[203]!, mkMatch(bracket:'B', round:'qf', num:203, nextNum:206, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[6], 3)));
+      batch.set(refs[204]!, mkMatch(bracket:'B', round:'qf', num:204, nextNum:206, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 3), bSlot: groupSlot('team_b', g[5], 3)));
+      batch.set(refs[205]!, mkMatch(bracket:'B', round:'sf', num:205, nextNum:207, nextSlot:'a',
+          aSlot: winSlot('team_a', 201), bSlot: winSlot('team_b', 202)));
+      batch.set(refs[206]!, mkMatch(bracket:'B', round:'sf', num:206, nextNum:207, nextSlot:'b',
+          aSlot: winSlot('team_a', 203), bSlot: winSlot('team_b', 204)));
+      batch.set(refs[207]!, mkMatch(bracket:'B', round:'final', num:207,
+          aSlot: winSlot('team_a', 205), bSlot: winSlot('team_b', 206)));
+
+      // C-bracket: KF → SF → Finale (8 lag, 4. plasserte)
+      batch.set(refs[301]!, mkMatch(bracket:'C', round:'qf', num:301, nextNum:305, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[7], 4)));
+      batch.set(refs[302]!, mkMatch(bracket:'C', round:'qf', num:302, nextNum:305, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 4), bSlot: groupSlot('team_b', g[4], 4)));
+      batch.set(refs[303]!, mkMatch(bracket:'C', round:'qf', num:303, nextNum:306, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[6], 4)));
+      batch.set(refs[304]!, mkMatch(bracket:'C', round:'qf', num:304, nextNum:306, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 4), bSlot: groupSlot('team_b', g[5], 4)));
+      batch.set(refs[305]!, mkMatch(bracket:'C', round:'sf', num:305, nextNum:307, nextSlot:'a',
+          aSlot: winSlot('team_a', 301), bSlot: winSlot('team_b', 302)));
+      batch.set(refs[306]!, mkMatch(bracket:'C', round:'sf', num:306, nextNum:307, nextSlot:'b',
+          aSlot: winSlot('team_a', 303), bSlot: winSlot('team_b', 304)));
+      batch.set(refs[307]!, mkMatch(bracket:'C', round:'final', num:307,
+          aSlot: winSlot('team_a', 305), bSlot: winSlot('team_b', 306)));
+    }
+
+    await batch.commit();
+    _snack("A/B/C-sluttspill generert ($numGroups grupper)!");
+  }
+
+  // ─── Sluttspill-fanen ────────────────────────────────────────────────────
+
+  Widget _buildPlayoffsTab() {
+    if (_selectedCategoryId == null) {
+      return const Center(child: Text("Velg en klasse i menyen over."));
+    }
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.emoji_events, size: 16),
+            label: const Text("Generer A/B/C Sluttspill"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFF5A623),
+              foregroundColor: Colors.white,
+              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-              onPressed: () {
-                // Utfør slettingen
-                FirebaseFirestore.instance.collection(collection).doc(docId).delete();
-                Navigator.pop(context); // Lukk vindu
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Slettet!")));
-              },
-              child: const Text("Slett"),
+            onPressed: _generatePlayoffs,
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(child: _buildBracketsDisplay()),
+      ],
+    );
+  }
+
+  Widget _buildBracketsDisplay() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('matches')
+          .where('tournament_id', isEqualTo: widget.tournamentId)
+          .where('category_id', isEqualTo: _selectedCategoryId)
+          .where('stage', isEqualTo: 'playoff')
+          .snapshots(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        final matches = snap.data!.docs;
+
+        if (matches.isEmpty) {
+          return const Center(
+            child: Text(
+              "Sluttspill ikke generert enda.\nFullfør gruppespillet og trykk knappen over.",
+              textAlign: TextAlign.center,
             ),
+          );
+        }
+
+        List<DocumentSnapshot> forBracket(String b) => (matches
+            .where((m) => (m.data() as Map)['bracket'] == b)
+            .toList()
+          ..sort((a, x) => ((a.data() as Map)['match_number'] as int? ?? 0)
+              .compareTo((x.data() as Map)['match_number'] as int? ?? 0)));
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _bracketHeader('A-SLUTTSPILL', Colors.amber[800]!),
+            const SizedBox(height: 4),
+            ...forBracket('A').map(_buildPlayoffMatchRow),
+            const SizedBox(height: 20),
+            _bracketHeader('B-SLUTTSPILL', Colors.blue[700]!),
+            const SizedBox(height: 4),
+            ...forBracket('B').map(_buildPlayoffMatchRow),
+            const SizedBox(height: 20),
+            _bracketHeader('C-SLUTTSPILL', Colors.grey[700]!),
+            const SizedBox(height: 4),
+            ...forBracket('C').map(_buildPlayoffMatchRow),
           ],
         );
       },
     );
   }
 
-  // --- 3. NY DIALOG: VELG LAG FRA LISTE ---
- // --- 3. NY DIALOG: VELG LAG FRA LISTE (FIKSET VERSJON) ---
-  void _showAddMatchDialog() {
-    // VIKTIG ENDRING: Vi lagrer kun ID-en til laget, ikke hele objektet
-    String? selectedTeamAId;
-    String? selectedTeamBId;
-
-    // Hent streamen utenfor builder for å unngå at den gjenskapes ved hver setState
-    final teamsStream = FirebaseFirestore.instance
-        .collection('teams')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .snapshots();
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StreamBuilder<QuerySnapshot>(
-          stream: teamsStream,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) return AlertDialog(content: Text("Feil: ${snapshot.error}"));
-            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-            
-            final teamDocs = snapshot.data!.docs;
-            if (teamDocs.isEmpty) return const AlertDialog(content: Text("Ingen lag registrert enda. Gå til 'Lag'-fanen først."));
-
-            final teamItems = teamDocs.map((doc) {
-              final data = doc.data() as Map<String, dynamic>;
-              return DropdownMenuItem<String>(
-                value: doc.id,
-                child: Text(data['team_name'] ?? "Ukjent lag"),
-              );
-            }).toList();
-
-            return StatefulBuilder(
-              builder: (context, setState) {
-                return AlertDialog(
-                  title: const Text("Opprett ny kamp"),
-                  content: SizedBox(
-                    width: double.maxFinite,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // --- VELG LAG A ---
-                        DropdownButtonFormField<String>(
-                          decoration: const InputDecoration(labelText: "Hjemmelag (Lag A)", border: OutlineInputBorder()),
-                          items: teamItems,
-                          initialValue: selectedTeamAId,
-                          onChanged: (value) {
-                            setState(() => selectedTeamAId = value);
-                          },
-                        ),
-                        const SizedBox(height: 20),
-                        
-                        // --- VELG LAG B ---
-                        DropdownButtonFormField<String>(
-                          decoration: const InputDecoration(labelText: "Bortelag (Lag B)", border: OutlineInputBorder()),
-                          items: teamItems,
-                          initialValue: selectedTeamBId,
-                          onChanged: (value) {
-                            setState(() => selectedTeamBId = value);
-                          },
-                        ),
-                        
-                        // Viser navnene for bekreftelse (valgfritt)
-                        if (selectedTeamAId != null && selectedTeamBId != null)
-                           const Padding(
-                             padding: EdgeInsets.only(top: 10),
-                             child: Text("Klar til å opprette...", style: TextStyle(color: Colors.green)),
-                           ),
-                      ],
-                    ),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
-                    ElevatedButton(
-                      onPressed: () {
-                        if (selectedTeamAId != null && selectedTeamBId != null) {
-                          if (selectedTeamAId == selectedTeamBId) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Du kan ikke velge samme lag to ganger!")));
-                            return;
-                          }
-
-                          // Lukk dialogen først for å unngå at en spinner henger igjen eller pop fjerner siden
-                          Navigator.pop(context);
-
-                          FirebaseFirestore.instance.collection('teams').doc(selectedTeamAId).get().then((docA) {
-                            FirebaseFirestore.instance.collection('teams').doc(selectedTeamBId).get().then((docB) {
-                              if (docA.exists && docB.exists) {
-                                Map<String, dynamic> teamAData = docA.data()!;
-                                teamAData['id'] = docA.id;
-                                
-                                Map<String, dynamic> teamBData = docB.data()!;
-                                teamBData['id'] = docB.id;
-
-                                // Start prosessen
-                                _addMatchFromTeams(teamAData, teamBData);
-                              }
-                            });
-                          });
-                        }
-                      },
-                      child: const Text("Opprett Kamp"),
-                    ),
-                  ],
-                );
-              },
-            );
-          },
-        );
-      },
+  Widget _bracketHeader(String title, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
+      child: Text(title,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
     );
   }
 
-  // --- 4. LEGG TIL LAG (Beholdt som den var) ---
-  void _showAddTeamDialog() {
-    String? selectedPlayer1Id;
-    String? selectedPlayer2Id;
-    String? selectedPlayer1Name;
-    String? selectedPlayer2Name;
-    String? selectedPlayer1Short;
-    String? selectedPlayer2Short;
+  Widget _buildPlayoffMatchRow(DocumentSnapshot matchDoc) {
+    final d = matchDoc.data() as Map<String, dynamic>;
+    final status = d['status'] as String? ?? 'pending';
+    final round = d['round'] as String? ?? '';
+    final num = d['match_number'] as int? ?? 0;
+    final isFinished = status == 'finished';
+    final isPending = status == 'pending';
+    final isPlaceholder = d['team_a_id'] == 'placeholder' || d['team_b_id'] == 'placeholder';
 
-    String getShortName(String firstName, String lastName) {
-      String firstInitial = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
-      return '$firstInitial.$lastName';
-    }
+    String roundLabel = round;
+    if (round == 'r16') roundLabel = 'R16';
+    if (round == 'qf') roundLabel = 'Kvartfinale';
+    if (round == 'sf') roundLabel = 'Semifinale';
+    if (round == 'final') roundLabel = 'FINALE';
 
-    final playersStream = FirebaseFirestore.instance.collection('players').orderBy('first_name').snapshots();
-
-    showDialog(
-      context: context,
-      builder: (context) => StreamBuilder<QuerySnapshot>(
-        stream: playersStream,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return AlertDialog(content: Text("Feil: ${snapshot.error}"), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("Lukk"))]);
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const AlertDialog(
-              content: SizedBox(height: 80, child: Center(child: CircularProgressIndicator())),
-            );
-          }
-
-          final playerDocs = snapshot.data?.docs ?? [];
-          if (playerDocs.isEmpty) return AlertDialog(content: const Text("Ingen spillere i databasen."), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("Lukk"))]);
-
-          final playerItems = playerDocs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final fullName = "${data['first_name']} ${data['last_name']}";
-            return DropdownMenuItem<String>(
-              value: doc.id,
-              child: Text(fullName),
-            );
-          }).toList();
-
-          return StatefulBuilder( // Lar oss oppdatere dropdowns internt i dialogen
-            builder: (context, setState) {
-              return AlertDialog(
-                title: const Text("Registrer nytt lag"),
-                content: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        decoration: const InputDecoration(labelText: "Spiller 1"),
-                        items: playerItems,
-                        initialValue: selectedPlayer1Id,
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() {
-                              selectedPlayer1Id = val;
-                              final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
-                              selectedPlayer1Name = "${p['first_name']} ${p['last_name']}";
-                              selectedPlayer1Short = getShortName(p['first_name'] ?? '', p['last_name'] ?? '');
-                            });
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 15),
-                      DropdownButtonFormField<String>(
-                        decoration: const InputDecoration(labelText: "Spiller 2"),
-                        items: playerItems,
-                        initialValue: selectedPlayer2Id,
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() {
-                              selectedPlayer2Id = val;
-                              final p = playerDocs.firstWhere((d) => d.id == val).data() as Map<String, dynamic>;
-                              selectedPlayer2Name = "${p['first_name']} ${p['last_name']}";
-                              selectedPlayer2Short = getShortName(p['first_name'] ?? '', p['last_name'] ?? '');
-                            });
-                          }
-                        },
-                      ),
-                    ],
+    return Card(
+      margin: const EdgeInsets.only(bottom: 6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 85,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Kamp $num', style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                  Text(roundLabel,
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.blue[900], fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    d['team_a_name'] ?? 'TBD',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isPending ? Colors.grey[500] : null,
+                      fontStyle: isPending ? FontStyle.italic : null,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                actions: [
-                  TextButton(onPressed: () => Navigator.pop(context), child: const Text("Avbryt")),
-                  ElevatedButton(
-                    onPressed: () {
-                      if (selectedPlayer1Id != null && selectedPlayer2Id != null) {
-                        if (selectedPlayer1Id == selectedPlayer2Id) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("En spiller kan ikke være på samme lag to ganger!")));
-                          return;
-                        }
-                        
-                        // Capture messenger before closing the dialog so we can
-                        // use it after the dialog context is deactivated.
-                        final messenger = ScaffoldMessenger.of(context);
-                        Navigator.pop(context);
-
-                        String teamName = "$selectedPlayer1Short/$selectedPlayer2Short";
-                        
-                        // Hent poeng for begge spillere
-                        final p1Data = playerDocs.firstWhere((d) => d.id == selectedPlayer1Id).data() as Map<String, dynamic>;
-                        final p2Data = playerDocs.firstWhere((d) => d.id == selectedPlayer2Id).data() as Map<String, dynamic>;
-                        
-                        int p1Points = p1Data['ranking_points'] is int ? p1Data['ranking_points'] as int : int.tryParse(p1Data['ranking_points']?.toString() ?? '0') ?? 0;
-                        int p2Points = p2Data['ranking_points'] is int ? p2Data['ranking_points'] as int : int.tryParse(p2Data['ranking_points']?.toString() ?? '0') ?? 0;
-                        int teamPoints = p1Points + p2Points;
-
-                        FirebaseFirestore.instance.collection('teams').add({
-                          'team_name': teamName,
-                          'tournament_id': widget.tournamentId,
-                          'player1_id': selectedPlayer1Id,
-                          'player1_name': selectedPlayer1Name,
-                          'player2_id': selectedPlayer2Id,
-                          'player2_name': selectedPlayer2Name,
-                          'team_points': teamPoints,
-                          'created_at': FieldValue.serverTimestamp(),
-                        }).then((_) {
-                          if (mounted) {
-                            messenger.showSnackBar(const SnackBar(content: Text("Lag lagt til!")));
-                          }
-                        });
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Velg begge spillere!")));
-                      }
-                    },
-                    child: const Text("Lagre Lag"),
+                  Text(
+                    d['team_b_name'] ?? 'TBD',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isPending ? Colors.grey[500] : null,
+                      fontStyle: isPending ? FontStyle.italic : null,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
-              );
-            }
-          );
-        }
+              ),
+            ),
+            if (isFinished)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '${d['home_score']} – ${d['away_score']}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                ),
+              )
+            else
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isPending ? Colors.grey[200] : Colors.blue[50],
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  isPending ? 'Venter' : 'Planlagt',
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: isPending ? Colors.grey[600] : Colors.blue[800]),
+                ),
+              ),
+            IconButton(
+              icon: const Icon(Icons.qr_code, size: 18),
+              tooltip: "QR",
+              onPressed: () =>
+                  _showQrDialog(matchDoc.id, d['team_a_name'] ?? 'A', d['team_b_name'] ?? 'B'),
+            ),
+            IconButton(
+              icon: Icon(Icons.sports_esports,
+                  size: 18, color: isPlaceholder ? Colors.grey : Colors.green),
+              tooltip: "Styr kamp",
+              onPressed: isPlaceholder
+                  ? null
+                  : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => MatchControlPage(
+                            matchId: matchDoc.id,
+                            teamAName: d['team_a_name'] ?? 'Lag A',
+                            teamBName: d['team_b_name'] ?? 'Lag B',
+                          ),
+                        ),
+                      ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // --- 5. UI BUILD ---
+  // ─── UI ───────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -503,552 +904,163 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           tabs: const [
-            Tab(icon: Icon(Icons.sports_volleyball), text: "Kamper"), 
             Tab(icon: Icon(Icons.groups), text: "Lag"),
-            Tab(icon: Icon(Icons.format_list_numbered), text: "Grupper"),
-            Tab(icon: Icon(Icons.emoji_events), text: "Sluttspill")
+            Tab(icon: Icon(Icons.grid_view), text: "Grupper"),
+            Tab(icon: Icon(Icons.emoji_events), text: "Sluttspill"),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_buildMatchesTab(), _buildTeamsTab(), _buildGroupsTab(), _buildPlayoffsTab()],
+      body: Column(
+        children: [
+          _buildCategorySelector(),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildTeamsTab(),
+                _buildGroupsTab(),
+                _buildPlayoffsTab(),
+              ],
+            ),
+          ),
+        ],
       ),
-      floatingActionButton: _tabController.index > 1 ? null : FloatingActionButton.extended(
-        onPressed: () {
-          if (_tabController.index == 1) {
-            _showAddTeamDialog();
-          } else {
-            _showAddMatchDialog(); // Kjører den nye dropdown-logikken
-          }
-        },
-        label: Text(_tabController.index == 1 ? "Nytt Lag" : "Ny Kamp"),
-        icon: Icon(_tabController.index == 1 ? Icons.group_add : Icons.sports_score),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
-      ),
+      floatingActionButton: _tabController.index == 0
+          ? FloatingActionButton.extended(
+              onPressed: _showAddTeamDialog,
+              label: const Text("Nytt Lag"),
+              icon: const Icon(Icons.group_add),
+              backgroundColor: Colors.blue[900],
+              foregroundColor: Colors.white,
+            )
+          : null,
     );
   }
 
-  // --- 6. LISTEVISNINGER (Beholdt som før) ---
-  Widget _buildTeamsTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.group_work),
-            label: const Text("Auto-generer 16 lag (fra database)"),
-            onPressed: () async {
-              final scaffold = ScaffoldMessenger.of(context);
-              final playersSnap = await FirebaseFirestore.instance.collection('players').get();
-              final players = playersSnap.docs.toList();
-              
-              if (players.length < 32) {
-                if (mounted) scaffold.showSnackBar(SnackBar(content: Text("Trenger minst 32 spillere i databasen for å lage 16 lag (har ${players.length})")));
-                return;
-              }
-              
-              players.shuffle();
-              WriteBatch batch = FirebaseFirestore.instance.batch();
-              
-              for (int i = 0; i < 16; i++) {
-                final p1 = players[i * 2];
-                final p2 = players[i * 2 + 1];
-                
-                final p1Data = p1.data();
-                final p2Data = p2.data();
-                
-                final p1Points = (p1Data['ranking_points'] as num?)?.toInt() ?? 0;
-                final p2Points = (p2Data['ranking_points'] as num?)?.toInt() ?? 0;
-                
-                final p1Name = "${p1Data['first_name']} ${p1Data['last_name']}".trim();
-                final p2Name = "${p2Data['first_name']} ${p2Data['last_name']}".trim();
-                
-                final p1Short = p1Data['last_name'] ?? p1Data['first_name'] ?? 'Ukjent';
-                final p2Short = p2Data['last_name'] ?? p2Data['first_name'] ?? 'Ukjent';
-                
-                final docRef = FirebaseFirestore.instance.collection('teams').doc();
-                batch.set(docRef, {
-                  'team_name': "$p1Short/$p2Short",
-                  'tournament_id': widget.tournamentId,
-                  'player1_id': p1.id,
-                  'player1_name': p1Name,
-                  'player2_id': p2.id,
-                  'player2_name': p2Name,
-                  'team_points': p1Points + p2Points,
-                  'created_at': FieldValue.serverTimestamp(),
-                });
-              }
-              
-              await batch.commit();
-              if (mounted) scaffold.showSnackBar(const SnackBar(content: Text("16 lag ble generert!")));
-            },
-          ),
-        ),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              final teams = snapshot.data?.docs ?? [];
-              if (teams.isEmpty) return const Center(child: Text("Ingen lag registrert."));
-              
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: teams.length,
-                itemBuilder: (context, index) {
-            final data = teams[index].data() as Map<String, dynamic>;
-            final seed = data.containsKey('seed') ? data['seed'] : null;
-            return Card(
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: Colors.blue[100],
-                  child: Text(seed?.toString() ?? '-', style: const TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                title: Text(data['team_name'] ?? 'Ukjent Lag'),
-                subtitle: Text("${data['player1_name']} & ${data['player2_name']}"),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      tooltip: "Endre seeding",
-                      onPressed: () => _showEditSeedDialog(teams[index].id, data['team_name'] ?? 'Ukjent Lag', seed),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      tooltip: "Slett lag",
-                      // Her bruker vi den nye sikkerhetsfunksjonen
-                      onPressed: () => _confirmDelete(teams[index].id, 'teams', "laget"),
-                    ),
-                  ],
+  Widget _buildCategorySelector() {
+    return Container(
+      color: Colors.blue[50],
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('categories')
+            .where('tournament_id', isEqualTo: widget.tournamentId)
+            .snapshots(),
+        builder: (ctx, snap) {
+          if (!snap.hasData) return const SizedBox(height: 40, child: Center(child: LinearProgressIndicator()));
+          final cats = snap.data!.docs;
+          if (cats.isEmpty) {
+            return const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text("Ingen klasser funnet. Legg til klasser ved turneringsopprettelse.",
+                  style: TextStyle(color: Colors.red)),
+            );
+          }
+
+          // Auto-select first if none selected
+          if (_selectedCategoryId == null && cats.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              setState(() {
+                _selectedCategoryId = cats.first.id;
+              });
+            });
+          }
+
+          return Row(
+            children: [
+              const Text("Klasse:", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButton<String>(
+                  value: _selectedCategoryId,
+                  isExpanded: true,
+                  underline: const SizedBox.shrink(),
+                  items: cats.map((c) {
+                    final data = c.data() as Map<String, dynamic>;
+                    return DropdownMenuItem<String>(
+                      value: c.id,
+                      child: Text("${data['name']} (max ${data['max_teams']} lag)"),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => _selectedCategoryId = v),
                 ),
               ),
-            );
-          },
-        );
-      },
-    ),
-    ),
-    ],
+            ],
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildMatchesTab() {
+  // ─── Lag-fanen ────────────────────────────────────────────────────────────
+
+  Widget _buildTeamsTab() {
+    if (_selectedCategoryId == null) {
+      return const Center(child: Text("Velg en klasse i menyen over."));
+    }
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(12),
           child: ElevatedButton.icon(
             icon: const Icon(Icons.auto_awesome),
-            label: const Text("Simuler alle oppsatte kamper (Test)"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.purple[800],
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              // Viser en snackbar som oppdaterer seg
-              final snackBar = ScaffoldMessenger.of(context);
-              snackBar.showSnackBar(const SnackBar(content: Text("Starter simulering..."), duration: Duration(days: 1)));
-              
-              await MatchSimulator.simulateScheduledMatches(widget.tournamentId, (progress) {
-                 // Her kunne vi brukt en StreamBuilder, men vi lar den være enkel.
-              });
-              
-              snackBar.hideCurrentSnackBar();
-              snackBar.showSnackBar(const SnackBar(content: Text("Simulering fullført!")));
-            },
+            label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple[800], foregroundColor: Colors.white),
+            onPressed: _autoGenerateTeams,
           ),
         ),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final matches = snapshot.data!.docs;
-        if (matches.isEmpty) return const Center(child: Text("Ingen kamper satt opp enda."));
-        
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: matches.length,
-          itemBuilder: (context, index) {
-            final data = matches[index].data() as Map<String, dynamic>;
-            final status = data['status'] ?? 'scheduled';
-            
-            return Card(
-              child: ListTile(
-                leading: const Icon(Icons.sports_volleyball),
-                title: Text("${data['team_a_name']} vs ${data['team_b_name']}"),
-                subtitle: Text("Status: $status"),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // QR-KNAPP
-                    IconButton(
-                      icon: const Icon(Icons.qr_code), 
-                      tooltip: "Vis QR",
-                      onPressed: () => _showQrDialog(matches[index].id, data['team_a_name'] ?? 'Lag A', data['team_b_name'] ?? 'Lag B')
-                    ),
-                    
-                    // KAMPSTYRING
-                    IconButton(
-                      icon: const Icon(Icons.sports_esports, color: Colors.green),
-                      tooltip: "Styr kamp",
-                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => MatchControlPage(matchId: matches[index].id, teamAName: data['team_a_name'] ?? 'Lag A', teamBName: data['team_b_name'] ?? 'Lag B'))),
-                    ),
+            stream: FirebaseFirestore.instance
+                .collection('teams')
+                .where('tournament_id', isEqualTo: widget.tournamentId)
+                .where('category_id', isEqualTo: _selectedCategoryId)
+                .snapshots(),
+            builder: (ctx, snap) {
+              if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+              final teams = snap.data!.docs;
+              if (teams.isEmpty) return const Center(child: Text("Ingen lag registrert enda.\nTrykk + for å legge til lag.", textAlign: TextAlign.center));
 
-                    // SLETT-KNAPP (NY!)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      tooltip: "Slett kamp",
-                      onPressed: () => _confirmDelete(matches[index].id, 'matches', "kampen"),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    ),
-    ), // Lukk Expanded
-    ],
-    ); // Lukk Column
-  }
-
-  // --- GRUPPESPILL UI OG LOGIKK ---
-  Widget _buildGroupsTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.shuffle),
-                label: const Text("Generer Grupper (16 lag)"),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], foregroundColor: Colors.white),
-                onPressed: _generateGroupStage,
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow),
-                label: const Text("Generer Runde 2"),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], foregroundColor: Colors.white),
-                onPressed: _generateGroupRound2,
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('teams')
-              .where('tournament_id', isEqualTo: widget.tournamentId)
-              .where('group', isNull: false)
-              .snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-              final teams = snapshot.data!.docs;
-              if (teams.isEmpty) return const Center(child: Text("Ingen grupper generert enda."));
-              
-              // Map lag til grupper
-              Map<String, List<DocumentSnapshot>> groups = {'A': [], 'B': [], 'C': [], 'D': []};
-              for (var t in teams) {
-                final data = t.data() as Map<String, dynamic>;
-                final g = data.containsKey('group') ? data['group'] as String? : null;
-                if (g != null && groups.containsKey(g)) groups[g]!.add(t);
-              }
-
-              return ListView(
-                padding: const EdgeInsets.all(16),
-                children: groups.keys.map((g) {
-                  final groupTeams = groups[g]!;
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(8),
-                          color: Colors.blue[100],
-                          child: Text("Gruppe $g", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                        ),
-                        ...groupTeams.map((t) {
-                          final data = t.data() as Map<String, dynamic>;
-                          final placement = data.containsKey('group_placement') ? data['group_placement'] : null;
-                          return ListTile(
-                            leading: CircleAvatar(child: Text(placement?.toString() ?? '-')),
-                            title: Text(data['team_name'] ?? 'Ukjent Lag'),
-                            subtitle: Text("${data['player1_name']} & ${data['player2_name']}"),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.edit, color: Colors.blue),
-                              tooltip: "Overstyr plassering",
-                              onPressed: () => _showEditPlacementDialog(t.id, data['team_name'] ?? 'Ukjent Lag', placement),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _generateGroupStage() async {
-    final snapshot = await FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).get();
-    final teams = snapshot.docs;
-    
-    if (teams.length < 16) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Trenger minst 16 lag (har ${teams.length}) for å generere gruppespill.")));
-      return;
-    }
-
-    // Sorter etter team_points (høyeste poengsum får seed 1, osv)
-    final sortedTeams = teams.toList();
-    sortedTeams.sort((a, b) {
-      final aData = a.data();
-      final bData = b.data();
-      final aPoints = aData.containsKey('team_points') ? (aData['team_points'] as int?) ?? 0 : 0;
-      final bPoints = bData.containsKey('team_points') ? (bData['team_points'] as int?) ?? 0 : 0;
-      // Sorterer synkende (høyest først)
-      return bPoints.compareTo(aPoints);
-    });
-
-    final selectedTeams = sortedTeams.take(16).toList();
-
-    // Snake seeding distribusjon for 4 grupper:
-    // A: 1, 8, 9, 16
-    // B: 2, 7, 10, 15
-    // C: 3, 6, 11, 14
-    // D: 4, 5, 12, 13
-    
-    final groupA = [selectedTeams[0], selectedTeams[7], selectedTeams[8], selectedTeams[15]];
-    final groupB = [selectedTeams[1], selectedTeams[6], selectedTeams[9], selectedTeams[14]];
-    final groupC = [selectedTeams[2], selectedTeams[5], selectedTeams[10], selectedTeams[13]];
-    final groupD = [selectedTeams[3], selectedTeams[4], selectedTeams[11], selectedTeams[12]];
-
-    final groupsMap = {
-      'A': groupA,
-      'B': groupB,
-      'C': groupC,
-      'D': groupD,
-    };
-    
-    WriteBatch batch = FirebaseFirestore.instance.batch();
-
-    for (String group in groupsMap.keys) {
-      final groupTeams = groupsMap[group]!;
-      
-      for (int i = 0; i < groupTeams.length; i++) {
-        var teamDoc = groupTeams[i];
-        // Finn lagets faktiske seed (index i selectedTeams + 1)
-        int actualSeed = selectedTeams.indexOf(teamDoc) + 1;
-        batch.update(teamDoc.reference, {
-          'group': group, 
-          'group_placement': FieldValue.delete(),
-          'seed': actualSeed,
-        });
-      }
-
-      // Første kamp: Høyeste seed mot laveste seed i gruppa (index 0 vs index 3)
-      final match1Ref = FirebaseFirestore.instance.collection('matches').doc();
-      batch.set(match1Ref, _createGroupMatchData(group, 'group_semi_1', groupTeams[0], groupTeams[3]));
-
-      // Andre kamp: De to midterste i gruppa (index 1 vs index 2)
-      final match2Ref = FirebaseFirestore.instance.collection('matches').doc();
-      batch.set(match2Ref, _createGroupMatchData(group, 'group_semi_2', groupTeams[1], groupTeams[2]));
-    }
-
-    await batch.commit();
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Gruppespill generert med seeding!")));
-  }
-
-  Future<void> _generateGroupRound2() async {
-    final matchesSnap = await FirebaseFirestore.instance.collection('matches')
-      .where('tournament_id', isEqualTo: widget.tournamentId)
-      .where('status', isEqualTo: 'finished')
-      .get();
-      
-    final allFinished = matchesSnap.docs;
-    
-    final groups = ['A', 'B', 'C', 'D'];
-    WriteBatch batch = FirebaseFirestore.instance.batch();
-    int addedMatches = 0;
-
-    for (String g in groups) {
-      final m1List = allFinished.where((m) => (m.data() as Map)['group'] == g && (m.data() as Map)['match_type'] == 'group_semi_1').toList();
-      final m2List = allFinished.where((m) => (m.data() as Map)['group'] == g && (m.data() as Map)['match_type'] == 'group_semi_2').toList();
-      
-      final existingFinalsSnap = await FirebaseFirestore.instance.collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('group', isEqualTo: g)
-        .where('match_type', isEqualTo: 'group_final')
-        .get();
-        
-      if (existingFinalsSnap.docs.isNotEmpty) continue;
-      
-      if (m1List.isNotEmpty && m2List.isNotEmpty) {
-        final m1 = m1List.first.data();
-        final m2 = m2List.first.data();
-        
-        final m1HomeScore = m1['home_score'] ?? 0;
-        final m1AwayScore = m1['away_score'] ?? 0;
-        final m1WinnerTeamId = m1HomeScore > m1AwayScore ? m1['team_a_id'] : m1['team_b_id'];
-        final m1LoserTeamId = m1HomeScore > m1AwayScore ? m1['team_b_id'] : m1['team_a_id'];
-
-        final m2HomeScore = m2['home_score'] ?? 0;
-        final m2AwayScore = m2['away_score'] ?? 0;
-        final m2WinnerTeamId = m2HomeScore > m2AwayScore ? m2['team_a_id'] : m2['team_b_id'];
-        final m2LoserTeamId = m2HomeScore > m2AwayScore ? m2['team_b_id'] : m2['team_a_id'];
-
-        final m1WinDoc = await FirebaseFirestore.instance.collection('teams').doc(m1WinnerTeamId).get();
-        final m2WinDoc = await FirebaseFirestore.instance.collection('teams').doc(m2WinnerTeamId).get();
-        final m1LoseDoc = await FirebaseFirestore.instance.collection('teams').doc(m1LoserTeamId).get();
-        final m2LoseDoc = await FirebaseFirestore.instance.collection('teams').doc(m2LoserTeamId).get();
-        
-        final finalRef = FirebaseFirestore.instance.collection('matches').doc();
-        batch.set(finalRef, _createGroupMatchData(g, 'group_final', m1WinDoc, m2WinDoc));
-        
-        final bronzeRef = FirebaseFirestore.instance.collection('matches').doc();
-        batch.set(bronzeRef, _createGroupMatchData(g, 'group_bronze', m1LoseDoc, m2LoseDoc));
-        
-        addedMatches += 2;
-      }
-    }
-    
-    if (addedMatches > 0) {
-      await batch.commit();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Genererte $addedMatches kamper i Runde 2!")));
-    } else {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ingen nye kamper kunne genereres. Vent på resultater.")));
-    }
-  }
-
-  Map<String, dynamic> _createGroupMatchData(String group, String matchType, DocumentSnapshot teamA, DocumentSnapshot teamB, {String round = 'Gruppespill'}) {
-    final tA = teamA.data() as Map<String, dynamic>? ?? {};
-    final tB = teamB.data() as Map<String, dynamic>? ?? {};
-    
-    return {
-      'tournament_id': widget.tournamentId,
-      'status': 'scheduled',
-      'court': 'TBD',
-      'timestamp': FieldValue.serverTimestamp(),
-      'home_score': 0, 
-      'away_score': 0,
-      'home_sets': 0,
-      'away_sets': 0,
-      'current_set': 1,
-      'past_sets': [],
-      'match_type': matchType,
-      'group': group,
-      'round': round,
-
-      'team_a_name': tA['team_name'] ?? 'Ukjent',
-      'team_a_id': teamA.id,
-      'team_a_p1_name': tA['player1_name'] ?? '',
-      'team_a_p1_id': tA['player1_id'] ?? '',
-      'team_a_p2_name': tA['player2_name'] ?? '',
-      'team_a_p2_id': tA['player2_id'] ?? '',
-
-      'team_b_name': tB['team_name'] ?? 'Ukjent',
-      'team_b_id': teamB.id,
-      'team_b_p1_name': tB['player1_name'] ?? '',
-      'team_b_p1_id': tB['player1_id'] ?? '',
-      'team_b_p2_name': tB['player2_name'] ?? '',
-      'team_b_p2_id': tB['player2_id'] ?? '',
-    };
-  }
-
-  // --- SLUTTSPILL UI OG LOGIKK ---
-  Widget _buildPlayoffsTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.emoji_events),
-                label: const Text("Generer Sluttspill"),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.purple[800], foregroundColor: Colors.white),
-                onPressed: _generatePlayoffs,
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.update),
-                label: const Text("Oppdater Bracket"),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], foregroundColor: Colors.white),
-                onPressed: _updatePlayoffBracket,
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('matches')
-              .where('tournament_id', isEqualTo: widget.tournamentId)
-              .snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) return Center(child: Text("Feil: ${snapshot.error}"));
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-              final matches = snapshot.data!.docs.where((m) {
-                final type = (m.data() as Map<String, dynamic>)['match_type'] as String?;
-                return type != null && type.contains('playoff');
-              }).toList();
-              if (matches.isEmpty) return const Center(child: Text("Sluttspill er ikke generert."));
-              
-              // Sorter etter match_type og deretter group (f.eks M1, M2)
-              matches.sort((a, b) {
-                 final aData = a.data() as Map;
-                 final bData = b.data() as Map;
-                 int typeCmp = (aData['match_type'] as String).compareTo(bData['match_type'] as String);
-                 if (typeCmp != 0) return typeCmp;
-                 
-                 // Extract number from group name (e.g. "M1" -> 1)
-                 int numA = int.tryParse((aData['group'] as String).replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-                 int numB = int.tryParse((bData['group'] as String).replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-                 return numA.compareTo(numB);
-              });
+              final sorted = List<DocumentSnapshot>.from(teams)
+                ..sort((a, b) {
+                  final as_ = (a.data() as Map)['seed'] as int? ?? 999;
+                  final bs = (b.data() as Map)['seed'] as int? ?? 999;
+                  final ap = (a.data() as Map)['team_points'] as num? ?? 0;
+                  final bp = (b.data() as Map)['team_points'] as num? ?? 0;
+                  if (as_ != 999 || bs != 999) return as_.compareTo(bs);
+                  return bp.compareTo(ap);
+                });
 
               return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: matches.length,
-                itemBuilder: (context, index) {
-                  final data = matches[index].data() as Map<String, dynamic>;
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                itemCount: sorted.length,
+                itemBuilder: (ctx, i) {
+                  final d = sorted[i].data() as Map<String, dynamic>;
+                  final seed = d['seed'] as int?;
+                  final group = d['group'] as String?;
+                  final placement = d['group_placement'] as int?;
                   return Card(
                     child: ListTile(
-                      title: Text("${data['group']}: ${data['team_a_name']} vs ${data['team_b_name']}"),
-                      subtitle: Text("Type: ${data['match_type']} | Status: ${data['status']}"),
+                      leading: CircleAvatar(
+                        backgroundColor: seed != null ? Colors.blue[100] : Colors.grey[200],
+                        child: Text(seed?.toString() ?? '-',
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      title: Text(d['team_name'] ?? 'Ukjent Lag',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("${d['player1_name'] ?? ''} & ${d['player2_name'] ?? ''}"),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            icon: const Icon(Icons.qr_code), 
-                            onPressed: () => _showQrDialog(matches[index].id, data['team_a_name'] ?? 'Lag A', data['team_b_name'] ?? 'Lag B')
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.sports_esports, color: Colors.green),
-                            onPressed: () {
-                               if (data['team_a_id'] == 'placeholder' || data['team_b_id'] == 'placeholder') {
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kan ikke styre kamp før begge lag er klare.")));
-                                  return;
-                               }
-                               Navigator.push(context, MaterialPageRoute(builder: (context) => MatchControlPage(matchId: matches[index].id, teamAName: data['team_a_name'], teamBName: data['team_b_name'])));
-                            },
-                          ),
+                          if (group != null)
+                            Chip(
+                              label: Text("Pulje $group${placement != null ? ' • $placement.' : ''}"),
+                              backgroundColor: Colors.blue[50],
+                              visualDensity: VisualDensity.compact,
+                            ),
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => _confirmDelete(matches[index].id, 'matches', "sluttspillkampen"),
+                            onPressed: () => _confirmDeleteTeam(sorted[i].id, d['team_name'] ?? 'laget'),
                           ),
                         ],
                       ),
@@ -1063,281 +1075,258 @@ class _TournamentControlPageState extends State<TournamentControlPage> with Sing
     );
   }
 
-  Future<void> _finalizeGroupPlacements() async {
-    final matchesSnap = await FirebaseFirestore.instance.collection('matches')
-      .where('tournament_id', isEqualTo: widget.tournamentId)
-      .where('status', isEqualTo: 'finished')
-      .get();
-      
-    final allFinished = matchesSnap.docs;
-    WriteBatch batch = FirebaseFirestore.instance.batch();
-    int updatedTeams = 0;
+  // ─── Grupper-fanen ────────────────────────────────────────────────────────
 
-    final groups = ['A', 'B', 'C', 'D'];
-    for (String g in groups) {
-      final gFinals = allFinished.where((m) => (m.data() as Map)['group'] == g && (m.data() as Map)['match_type'] == 'group_final').toList();
-      final gBronzes = allFinished.where((m) => (m.data() as Map)['group'] == g && (m.data() as Map)['match_type'] == 'group_bronze').toList();
-      
-      if (gFinals.isNotEmpty) {
-        final m = gFinals.first.data();
-        final mHomeScore = m['home_score'] ?? 0;
-        final mAwayScore = m['away_score'] ?? 0;
-        final mWinnerTeamId = mHomeScore > mAwayScore ? m['team_a_id'] : m['team_b_id'];
-        final mLoserTeamId = mHomeScore > mAwayScore ? m['team_b_id'] : m['team_a_id'];
-        
-        batch.update(FirebaseFirestore.instance.collection('teams').doc(mWinnerTeamId), {'group_placement': 1});
-        batch.update(FirebaseFirestore.instance.collection('teams').doc(mLoserTeamId), {'group_placement': 2});
-        updatedTeams += 2;
-      }
-      
-      if (gBronzes.isNotEmpty) {
-        final m = gBronzes.first.data();
-        final mHomeScore = m['home_score'] ?? 0;
-        final mAwayScore = m['away_score'] ?? 0;
-        final mWinnerTeamId = mHomeScore > mAwayScore ? m['team_a_id'] : m['team_b_id'];
-        final mLoserTeamId = mHomeScore > mAwayScore ? m['team_b_id'] : m['team_a_id'];
-        
-        batch.update(FirebaseFirestore.instance.collection('teams').doc(mWinnerTeamId), {'group_placement': 3});
-        batch.update(FirebaseFirestore.instance.collection('teams').doc(mLoserTeamId), {'group_placement': 4});
-        updatedTeams += 2;
-      }
+  Widget _buildGroupsTab() {
+    if (_selectedCategoryId == null) {
+      return const Center(child: Text("Velg en klasse i menyen over."));
     }
-    
-    if (updatedTeams > 0) {
-      await batch.commit();
-    }
+
+    return Column(
+      children: [
+        // Action buttons
+        Container(
+          padding: const EdgeInsets.all(12),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              ElevatedButton.icon(
+                icon: const Icon(Icons.shuffle, size: 16),
+                label: const Text("Generer Grupper\n(Runde 1)"),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[900], foregroundColor: Colors.white,
+                    textStyle: const TextStyle(fontSize: 12)),
+                onPressed: _generateGroupStage,
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.play_arrow, size: 16),
+                label: const Text("Sett opp\nRunde 2"),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange[800], foregroundColor: Colors.white,
+                    textStyle: const TextStyle(fontSize: 12)),
+                onPressed: _generateGroupRound2,
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.leaderboard, size: 16),
+                label: const Text("Beregn\nPlasseringer"),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[800], foregroundColor: Colors.white,
+                    textStyle: const TextStyle(fontSize: 12)),
+                onPressed: _finalizePlacements,
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.auto_awesome, size: 16),
+                label: const Text("Simuler\nAlt"),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple[800], foregroundColor: Colors.white,
+                    textStyle: const TextStyle(fontSize: 12)),
+                onPressed: _simulateAll,
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Groups display
+        Expanded(child: _buildGroupsDisplay()),
+      ],
+    );
   }
 
-  Future<void> _generatePlayoffs() async {
-    try {
-      await _finalizeGroupPlacements();
-      
-      final teamsSnap = await FirebaseFirestore.instance.collection('teams')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('group_placement', isNull: false)
-        .get();
-        
-      final teams = teamsSnap.docs;
-      if (teams.length < 16) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trenger alle 16 lag ferdigspilt i grupper for å generere sluttspill.")));
-        return;
-      }
+  Widget _buildGroupsDisplay() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('teams')
+          .where('tournament_id', isEqualTo: widget.tournamentId)
+          .where('category_id', isEqualTo: _selectedCategoryId)
+          .snapshots(),
+      builder: (ctx, teamSnap) {
+        if (!teamSnap.hasData) return const Center(child: CircularProgressIndicator());
+        final allTeams = teamSnap.data!.docs;
 
-    
-    DocumentSnapshot? getTeam(String group, int placement) {
-      try {
-        return teams.firstWhere((t) => (t.data() as Map)['group'] == group && (t.data() as Map)['group_placement'] == placement);
-      } catch (e) {
-        return null;
-      }
-    }
+        // Collect unique group names
+        final groupNames = allTeams
+            .map((t) => (t.data() as Map)['group'] as String?)
+            .whereType<String>()
+            .toSet()
+            .toList()
+          ..sort();
 
-    final c3 = getTeam('C', 3); final d4 = getTeam('D', 4);
-    final a3 = getTeam('A', 3); final b4 = getTeam('B', 4);
-    final b3 = getTeam('B', 3); final a4 = getTeam('A', 4);
-    final d3 = getTeam('D', 3); final c4 = getTeam('C', 4);
-    
-    final a1 = getTeam('A', 1); final b2 = getTeam('B', 2);
-    final d1 = getTeam('D', 1); final c2 = getTeam('C', 2);
-    final c1 = getTeam('C', 1); final d2 = getTeam('D', 2);
-    final b1 = getTeam('B', 1); final a2 = getTeam('A', 2);
-
-    if (c3 == null || d4 == null || a3 == null || b4 == null || 
-        b3 == null || a4 == null || d3 == null || c4 == null ||
-        a1 == null || b2 == null || d1 == null || c2 == null || 
-        c1 == null || d2 == null || b1 == null || a2 == null) {
-       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Mangler noen lagplasseringer. Er alle gruppekamper ferdig?")));
-       return;
-    }
-
-    WriteBatch batch = FirebaseFirestore.instance.batch();
-    
-    final m1Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m1Ref, _createPlayoffMatchData('1_playoff_r1', 'M1', c3, d4));
-    
-    final m2Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m2Ref, _createPlayoffMatchData('1_playoff_r1', 'M2', a3, b4));
-
-    final m3Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m3Ref, _createPlayoffMatchData('1_playoff_r1', 'M3', b3, a4));
-
-    final m4Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m4Ref, _createPlayoffMatchData('1_playoff_r1', 'M4', d3, c4));
-    
-    final m5Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m5Ref, _createPlayoffMatchDataWithPlaceholder('2_playoff_r2', 'M5', b2, 'Vinner M1', m1Ref.id));
-
-    final m6Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m6Ref, _createPlayoffMatchDataWithPlaceholder('2_playoff_r2', 'M6', c2, 'Vinner M2', m2Ref.id));
-
-    final m7Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m7Ref, _createPlayoffMatchDataWithPlaceholder('2_playoff_r2', 'M7', d2, 'Vinner M3', m3Ref.id));
-
-    final m8Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m8Ref, _createPlayoffMatchDataWithPlaceholder('2_playoff_r2', 'M8', a2, 'Vinner M4', m4Ref.id));
-
-    final m9Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m9Ref, _createPlayoffMatchDataWithPlaceholder('3_playoff_r3', 'M9', a1, 'Vinner M5', m5Ref.id));
-
-    final m10Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m10Ref, _createPlayoffMatchDataWithPlaceholder('3_playoff_r3', 'M10', d1, 'Vinner M6', m6Ref.id));
-
-    final m11Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m11Ref, _createPlayoffMatchDataWithPlaceholder('3_playoff_r3', 'M11', c1, 'Vinner M7', m7Ref.id));
-
-    final m12Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m12Ref, _createPlayoffMatchDataWithPlaceholder('3_playoff_r3', 'M12', b1, 'Vinner M8', m8Ref.id));
-
-    final m13Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m13Ref, _createPlayoffMatchDataDoublePlaceholder('4_playoff_r4', 'M13', 'Vinner M9', m9Ref.id, 'Vinner M10', m10Ref.id));
-
-    final m14Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m14Ref, _createPlayoffMatchDataDoublePlaceholder('4_playoff_r4', 'M14', 'Vinner M11', m11Ref.id, 'Vinner M12', m12Ref.id));
-
-    final m15Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m15Ref, _createPlayoffMatchDataDoublePlaceholder('5_playoff_final', 'Finale', 'Vinner M13', m13Ref.id, 'Vinner M14', m14Ref.id));
-    
-    final m16Ref = FirebaseFirestore.instance.collection('matches').doc();
-    batch.set(m16Ref, _createPlayoffMatchDataDoublePlaceholder('5_playoff_bronze', 'Bronsefinale', 'Taper M13', m13Ref.id, 'Taper M14', m14Ref.id));
-
-    await batch.commit();
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sluttspill opprettet!")));
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text("Feil: $e (Sjekk kjørekonsollen for evt. index-lenker)"),
-        duration: const Duration(seconds: 10),
-      ));
-      print("Error in _generatePlayoffs: $e");
-    }
-  }
-
-  Future<void> _updatePlayoffBracket() async {
-    final matchesSnap = await FirebaseFirestore.instance.collection('matches')
-      .where('tournament_id', isEqualTo: widget.tournamentId)
-      .where('round', isEqualTo: 'Sluttspill')
-      .get();
-      
-    final matches = matchesSnap.docs;
-    WriteBatch batch = FirebaseFirestore.instance.batch();
-    int updates = 0;
-
-    for (var m in matches) {
-      final data = m.data();
-      Map<String, dynamic> docUpdates = {};
-      
-      if (data['team_a_id'] == 'placeholder' && data['dependent_on_a'] != null) {
-        final depId = data['dependent_on_a'];
-        final depA = matches.firstWhere((x) => x.id == depId, orElse: () => m);
-        if (depA.id != m.id && (depA.data())['status'] == 'finished') {
-           final depData = depA.data();
-           final hScore = depData['home_score'] ?? 0;
-           final aScore = depData['away_score'] ?? 0;
-           final winId = hScore > aScore ? depData['team_a_id'] : depData['team_b_id'];
-           final loseId = hScore > aScore ? depData['team_b_id'] : depData['team_a_id'];
-           
-           final targetId = data['match_type'] == '5_playoff_bronze' ? loseId : winId;
-
-           final tDoc = await FirebaseFirestore.instance.collection('teams').doc(targetId).get();
-           final tData = tDoc.data()!;
-           
-           docUpdates.addAll({
-             'team_a_id': targetId,
-             'team_a_name': tData['team_name'],
-             'team_a_p1_id': tData['player1_id'],
-             'team_a_p1_name': tData['player1_name'],
-             'team_a_p2_id': tData['player2_id'],
-             'team_a_p2_name': tData['player2_name'],
-           });
+        if (groupNames.isEmpty) {
+          return const Center(
+            child: Text("Grupper ikke generert enda.\nTrykk \"Generer Grupper\" over.",
+                textAlign: TextAlign.center),
+          );
         }
-      }
 
-      if (data['team_b_id'] == 'placeholder' && data['dependent_on_b'] != null) {
-        final depId = data['dependent_on_b'];
-        final depB = matches.firstWhere((x) => x.id == depId, orElse: () => m);
-        if (depB.id != m.id && (depB.data() as Map)['status'] == 'finished') {
-           final depData = depB.data() as Map;
-           final hScore = depData['home_score'] ?? 0;
-           final aScore = depData['away_score'] ?? 0;
-           final winId = hScore > aScore ? depData['team_a_id'] : depData['team_b_id'];
-           final loseId = hScore > aScore ? depData['team_b_id'] : depData['team_a_id'];
-           
-           final targetId = data['match_type'] == '5_playoff_bronze' ? loseId : winId;
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('matches')
+              .where('tournament_id', isEqualTo: widget.tournamentId)
+              .where('category_id', isEqualTo: _selectedCategoryId)
+              .where('stage', isEqualTo: 'group')
+              .snapshots(),
+          builder: (ctx, matchSnap) {
+            final allMatches = matchSnap.hasData ? matchSnap.data!.docs : <DocumentSnapshot>[];
 
-           final tDoc = await FirebaseFirestore.instance.collection('teams').doc(targetId).get();
-           final tData = tDoc.data()!;
-           
-           docUpdates.addAll({
-             'team_b_id': targetId,
-             'team_b_name': tData['team_name'],
-             'team_b_p1_id': tData['player1_id'],
-             'team_b_p1_name': tData['player1_name'],
-             'team_b_p2_id': tData['player2_id'],
-             'team_b_p2_name': tData['player2_name'],
-           });
-        }
-      }
-      
-      if (docUpdates.isNotEmpty) {
-        batch.update(m.reference, docUpdates);
-        updates++;
-      }
-    }
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: groupNames.length,
+              itemBuilder: (ctx, i) {
+                final groupName = groupNames[i];
+                final groupTeams = allTeams
+                    .where((t) => (t.data() as Map)['group'] == groupName)
+                    .toList()
+                  ..sort((a, b) {
+                    final ap = (a.data() as Map)['group_placement'] as int? ?? 99;
+                    final bp = (b.data() as Map)['group_placement'] as int? ?? 99;
+                    if (ap != 99 || bp != 99) return ap.compareTo(bp);
+                    final as_ = (a.data() as Map)['seed'] as int? ?? 99;
+                    final bs = (b.data() as Map)['seed'] as int? ?? 99;
+                    return as_.compareTo(bs);
+                  });
 
-    if (updates > 0) {
-      await batch.commit();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Oppdaterte $updates lag i sluttspillet!")));
-    } else {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ingen nye lag kunne flyttes videre. Mangler ferdige kamper.")));
-    }
+                final groupMatches = allMatches
+                    .where((m) => (m.data() as Map)['group'] == groupName)
+                    .toList()
+                  ..sort((a, b) {
+                    final ta = (a.data() as Map)['match_type'] as String? ?? '';
+                    final tb = (b.data() as Map)['match_type'] as String? ?? '';
+                    return ta.compareTo(tb);
+                  });
+
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        color: Colors.blue[900],
+                        child: Text("Pulje $groupName",
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                      ),
+                      // Teams
+                      ...groupTeams.asMap().entries.map((e) {
+                        final idx = e.key;
+                        final d = e.value.data() as Map<String, dynamic>;
+                        final placement = d['group_placement'] as int?;
+                        final seed = d['seed'] as int?;
+                        return ListTile(
+                          dense: true,
+                          leading: CircleAvatar(
+                            radius: 14,
+                            backgroundColor: placement != null
+                                ? [Colors.amber[700], Colors.grey[400], Colors.brown[400], Colors.grey[300]][placement - 1]
+                                : Colors.blue[100],
+                            child: Text(
+                              placement?.toString() ?? (idx + 1).toString(),
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          title: Text(d['team_name'] ?? 'Ukjent',
+                              style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text("Seed $seed • ${d['player1_name'] ?? ''} & ${d['player2_name'] ?? ''}",
+                              style: const TextStyle(fontSize: 11)),
+                        );
+                      }),
+                      const Divider(height: 1),
+                      // Matches
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Text("KAMPER",
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.bold)),
+                      ),
+                      if (groupMatches.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text("Ingen kamper enda.", style: TextStyle(color: Colors.grey)),
+                        )
+                      else
+                        ...groupMatches.map((m) => _buildMatchRow(m)),
+                      const SizedBox(height: 4),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
   }
 
-  Map<String, dynamic> _createPlayoffMatchData(String matchType, String matchName, DocumentSnapshot teamA, DocumentSnapshot teamB) {
-    return _createGroupMatchData(matchName, matchType, teamA, teamB, round: 'Sluttspill');
-  }
+  Widget _buildMatchRow(DocumentSnapshot matchDoc) {
+    final d = matchDoc.data() as Map<String, dynamic>;
+    final mType = d['match_type'] as String? ?? '';
+    final status = d['status'] as String? ?? 'scheduled';
+    final isFinished = status == 'finished';
+    final isPlaceholder = d['team_a_id'] == 'placeholder' || d['team_b_id'] == 'placeholder';
 
-  Map<String, dynamic> _createPlayoffMatchDataWithPlaceholder(String matchType, String matchName, DocumentSnapshot teamA, String placeholderName, String depId) {
-    final tA = teamA.data() as Map<String, dynamic>;
-    return {
-      'tournament_id': widget.tournamentId,
-      'status': 'scheduled',
-      'court': 'TBD',
-      'timestamp': FieldValue.serverTimestamp(),
-      'home_score': 0, 'away_score': 0,
-      'home_sets': 0, 'away_sets': 0,
-      'current_set': 1, 'past_sets': [],
-      'match_type': matchType, 'group': matchName, 'round': 'Sluttspill',
-      
-      'team_a_name': tA['team_name'], 'team_a_id': teamA.id,
-      'team_a_p1_name': tA['player1_name'], 'team_a_p1_id': tA['player1_id'],
-      'team_a_p2_name': tA['player2_name'], 'team_a_p2_id': tA['player2_id'],
+    String label = mType;
+    if (mType == 'group_match_1') label = 'Kamp 1 (S1 vs S4)';
+    if (mType == 'group_match_2') label = 'Kamp 2 (S2 vs S3)';
+    if (mType == 'group_match_3') label = 'Vinnerkamp → 1./2.';
+    if (mType == 'group_match_4') label = 'Taperkamp → 3./4.';
 
-      'team_b_name': placeholderName, 'team_b_id': 'placeholder',
-      'team_b_p1_name': '', 'team_b_p1_id': '',
-      'team_b_p2_name': '', 'team_b_p2_id': '',
-      'dependent_on_b': depId,
-    };
-  }
-
-  Map<String, dynamic> _createPlayoffMatchDataDoublePlaceholder(String matchType, String matchName, String pA, String depA, String pB, String depB) {
-    return {
-      'tournament_id': widget.tournamentId,
-      'status': 'scheduled',
-      'court': 'TBD',
-      'timestamp': FieldValue.serverTimestamp(),
-      'home_score': 0, 'away_score': 0,
-      'home_sets': 0, 'away_sets': 0,
-      'current_set': 1, 'past_sets': [],
-      'match_type': matchType, 'group': matchName, 'round': 'Sluttspill',
-      
-      'team_a_name': pA, 'team_a_id': 'placeholder',
-      'team_a_p1_name': '', 'team_a_p1_id': '',
-      'team_a_p2_name': '', 'team_a_p2_id': '',
-      'dependent_on_a': depA,
-      
-      'team_b_name': pB, 'team_b_id': 'placeholder',
-      'team_b_p1_name': '', 'team_b_p1_id': '',
-      'team_b_p2_name': '', 'team_b_p2_id': '',
-      'dependent_on_b': depB,
-    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 10, color: Colors.blue[900], fontWeight: FontWeight.bold)),
+                Text(
+                  "${d['team_a_name'] ?? 'TBD'} vs ${d['team_b_name'] ?? 'TBD'}",
+                  style: const TextStyle(fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (isFinished)
+                  Text("${d['home_score']} – ${d['away_score']}",
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+              ],
+            ),
+          ),
+          // Status chip
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: isFinished ? Colors.green[100] : (status == 'live' ? Colors.red[100] : Colors.grey[200]),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              isFinished ? 'Ferdig' : (status == 'live' ? 'LIVE' : 'Planlagt'),
+              style: TextStyle(
+                fontSize: 10,
+                color: isFinished ? Colors.green[800] : (status == 'live' ? Colors.red[800] : Colors.grey[600]),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // QR button
+          IconButton(
+            icon: const Icon(Icons.qr_code, size: 20),
+            tooltip: "Vis QR",
+            onPressed: () => _showQrDialog(matchDoc.id, d['team_a_name'] ?? 'A', d['team_b_name'] ?? 'B'),
+          ),
+          // Control button
+          IconButton(
+            icon: Icon(Icons.sports_esports, size: 20, color: isPlaceholder ? Colors.grey : Colors.green),
+            tooltip: "Styr kamp",
+            onPressed: isPlaceholder ? null : () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => MatchControlPage(
+                matchId: matchDoc.id,
+                teamAName: d['team_a_name'] ?? 'Lag A',
+                teamBName: d['team_b_name'] ?? 'Lag B',
+              )),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -110,17 +110,16 @@ class MatchSimulator {
       'away_sets': awaySets,
     });
 
-    // --- GRUPPESPILL LOGIKK: Plassering ---
-    // Hvis kampen er en group_final eller group_bronze, kan vi kalkulere gruppeplassering
+    // Modified Pool Play: Sett plasseringer etter Kamp 3 og Kamp 4
     String? matchType = matchData['match_type'];
-    if (matchType == 'group_final' || matchType == 'group_bronze') {
+    if (matchType == 'group_match_3' || matchType == 'group_match_4') {
        String? winnerTeamId = homeWinsMatch ? matchData['team_a_id'] : matchData['team_b_id'];
        String? loserTeamId = homeWinsMatch ? matchData['team_b_id'] : matchData['team_a_id'];
-       
+
        if (winnerTeamId != null && loserTeamId != null) {
-         int winnerPlacement = matchType == 'group_final' ? 1 : 3;
-         int loserPlacement = matchType == 'group_final' ? 2 : 4;
-         
+         int winnerPlacement = matchType == 'group_match_3' ? 1 : 3;
+         int loserPlacement  = matchType == 'group_match_3' ? 2 : 4;
+
          batch.update(FirebaseFirestore.instance.collection('teams').doc(winnerTeamId), {
            'group_placement': winnerPlacement
          });
