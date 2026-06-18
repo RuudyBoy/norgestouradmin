@@ -3,6 +3,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'match_control_page.dart';
 import 'simulator_logic.dart';
+import 'registrations_page.dart';
+import 'edit_tournament_page.dart';
+import 'tournament_schedule_page.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -26,7 +29,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(() => setState(() {}));
   }
 
@@ -477,6 +480,313 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     snackCtrl.showSnackBar(const SnackBar(content: Text("Simulering fullført!")));
   }
 
+  // ─── Reset ────────────────────────────────────────────────────────────────
+
+  Future<void> _resetGroupStage() async {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Nullstill gruppespill"),
+        content: const Text(
+            "Dette sletter ALLE gruppekamper og tilbakestiller seeding og plasseringer for valgt klasse.\n\nLagene beholdes.\n\nEr du sikker?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Nullstill"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final matchSnap = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('stage', isEqualTo: 'group')
+        .get();
+
+    final teamSnap = await FirebaseFirestore.instance
+        .collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .get();
+
+    final batch = FirebaseFirestore.instance.batch();
+    for (final m in matchSnap.docs) batch.delete(m.reference);
+    for (final t in teamSnap.docs) {
+      batch.update(t.reference, {
+        'group': FieldValue.delete(),
+        'seed': FieldValue.delete(),
+        'group_placement': FieldValue.delete(),
+      });
+    }
+    await batch.commit();
+    _snack("Gruppespill nullstilt. Lag beholdt.");
+  }
+
+  Future<void> _resetPlayoffs() async {
+    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Nullstill sluttspill"),
+        content: const Text(
+            "Dette sletter ALLE sluttspillkamper for valgt klasse.\n\nGruppespillresultater og plasseringer beholdes.\n\nEr du sikker?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Nullstill"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final snap = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('stage', isEqualTo: 'playoff')
+        .get();
+    final batch = FirebaseFirestore.instance.batch();
+    for (final m in snap.docs) batch.delete(m.reference);
+    await batch.commit();
+    _snack("Sluttspill nullstilt.");
+  }
+
+  // ─── Match editing ─────────────────────────────────────────────────────────
+
+  void _showMatchEditDialog(DocumentSnapshot matchDoc) {
+    final d = matchDoc.data() as Map<String, dynamic>;
+    final courtCtrl = TextEditingController(text: d['court'] as String? ?? '');
+    final timeCtrl  = TextEditingController(text: d['match_time'] as String? ?? '');
+    final homeScoreCtrl = TextEditingController(text: '${d['home_score'] ?? 0}');
+    final awayScoreCtrl = TextEditingController(text: '${d['away_score'] ?? 0}');
+    final isFinished = (d['status'] as String? ?? '') == 'finished';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, set) => AlertDialog(
+        title: Text(
+          "${d['team_a_name'] ?? 'A'} vs ${d['team_b_name'] ?? 'B'}",
+          style: const TextStyle(fontSize: 15),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: courtCtrl,
+                      decoration: const InputDecoration(
+                          labelText: "Bane", border: OutlineInputBorder(), prefixIcon: Icon(Icons.grid_view)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: timeCtrl,
+                      decoration: const InputDecoration(
+                          labelText: "Tid (HH:MM)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.access_time)),
+                    ),
+                  ),
+                ],
+              ),
+              if (isFinished) ...[
+                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 4),
+                const Text("Overstyr sett-resultat",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: homeScoreCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: d['team_a_name'] ?? 'Lag A',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Text("–", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: awayScoreCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: d['team_b_name'] ?? 'Lag B',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 4),
+              const Text("Bytt lag",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.swap_horiz),
+                label: const Text("Bytt Lag A ↔ Lag B"),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await _swapTeamsInMatch(matchDoc);
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
+          ElevatedButton(
+            onPressed: () async {
+              final updates = <String, dynamic>{
+                'court': courtCtrl.text.trim(),
+                'match_time': timeCtrl.text.trim(),
+              };
+              if (isFinished) {
+                final hs = int.tryParse(homeScoreCtrl.text) ?? (d['home_score'] as int? ?? 0);
+                final as_ = int.tryParse(awayScoreCtrl.text) ?? (d['away_score'] as int? ?? 0);
+                updates['home_score'] = hs;
+                updates['away_score'] = as_;
+              }
+              await matchDoc.reference.update(updates);
+              if (ctx.mounted) {
+                Navigator.pop(ctx);
+                _snack("Kamp oppdatert.");
+              }
+            },
+            child: const Text("Lagre"),
+          ),
+        ],
+      )),
+    );
+  }
+
+  Future<void> _swapTeamsInMatch(DocumentSnapshot matchDoc) async {
+    final d = matchDoc.data() as Map<String, dynamic>;
+    await matchDoc.reference.update({
+      'team_a_name': d['team_b_name'],
+      'team_a_id': d['team_b_id'],
+      'team_a_p1_name': d['team_b_p1_name'],
+      'team_a_p1_id': d['team_b_p1_id'],
+      'team_a_p2_name': d['team_b_p2_name'],
+      'team_a_p2_id': d['team_b_p2_id'],
+      'team_b_name': d['team_a_name'],
+      'team_b_id': d['team_a_id'],
+      'team_b_p1_name': d['team_a_p1_name'],
+      'team_b_p1_id': d['team_a_p1_id'],
+      'team_b_p2_name': d['team_a_p2_name'],
+      'team_b_p2_id': d['team_a_p2_id'],
+    });
+    _snack("Lag byttet.");
+  }
+
+  // ─── Team editing ──────────────────────────────────────────────────────────
+
+  void _showTeamEditDialog(DocumentSnapshot teamDoc) async {
+    final d = teamDoc.data() as Map<String, dynamic>;
+    final nameCtrl = TextEditingController(text: d['team_name'] ?? '');
+    int? seed = (d['seed'] as num?)?.toInt();
+    String? currentGroup = d['group'] as String?;
+    String? selectedGroup = currentGroup;
+
+    // Fetch all groups for this category
+    final groupsSnap = await FirebaseFirestore.instance
+        .collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .get();
+
+    final allGroups = groupsSnap.docs
+        .map((t) => (t.data() as Map)['group'] as String?)
+        .whereType<String>()
+        .toSet()
+        .toList()
+      ..sort();
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, set) => AlertDialog(
+        title: Text("Rediger: ${d['team_name'] ?? ''}"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                  labelText: "Lagnavn", border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              keyboardType: TextInputType.number,
+              controller: TextEditingController(text: seed?.toString() ?? ''),
+              decoration: const InputDecoration(
+                  labelText: "Seed-nummer", border: OutlineInputBorder()),
+              onChanged: (v) => seed = int.tryParse(v),
+            ),
+            if (allGroups.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedGroup != null && allGroups.contains(selectedGroup) ? selectedGroup : null,
+                decoration: const InputDecoration(
+                    labelText: "Flytt til pulje", border: OutlineInputBorder()),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text("Ingen pulje")),
+                  ...allGroups.map((g) => DropdownMenuItem(value: g, child: Text("Pulje $g"))),
+                ],
+                onChanged: (v) => set(() => selectedGroup = v),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
+          ElevatedButton(
+            onPressed: () async {
+              final updates = <String, dynamic>{
+                'team_name': nameCtrl.text.trim(),
+                if (seed != null) 'seed': seed,
+              };
+              if (selectedGroup != currentGroup) {
+                if (selectedGroup == null) {
+                  updates['group'] = FieldValue.delete();
+                } else {
+                  updates['group'] = selectedGroup;
+                }
+              }
+              await teamDoc.reference.update(updates);
+              if (ctx.mounted) {
+                Navigator.pop(ctx);
+                _snack("Lag oppdatert.");
+              }
+            },
+            child: const Text("Lagre"),
+          ),
+        ],
+      )),
+    );
+  }
+
   // ─── Playoff logic ─────────────────────────────────────────────────────────
 
   Future<void> _generatePlayoffs() async {
@@ -702,28 +1012,6 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     if (_selectedCategoryId == null) {
       return const Center(child: Text("Velg en klasse i menyen over."));
     }
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.emoji_events, size: 16),
-            label: const Text("Generer A/B/C Sluttspill"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFF5A623),
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-            ),
-            onPressed: _generatePlayoffs,
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(child: _buildBracketsDisplay()),
-      ],
-    );
-  }
-
-  Widget _buildBracketsDisplay() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('matches')
@@ -735,14 +1023,13 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final matches = snap.data!.docs;
 
-        if (matches.isEmpty) {
-          return const Center(
-            child: Text(
-              "Sluttspill ikke generert enda.\nFullfør gruppespillet og trykk knappen over.",
-              textAlign: TextAlign.center,
-            ),
-          );
-        }
+        // Find which brackets actually have matches
+        final brackets = matches
+            .map((m) => (m.data() as Map)['bracket'] as String?)
+            .whereType<String>()
+            .toSet()
+            .toList()
+          ..sort();
 
         List<DocumentSnapshot> forBracket(String b) => (matches
             .where((m) => (m.data() as Map)['bracket'] == b)
@@ -750,32 +1037,146 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           ..sort((a, x) => ((a.data() as Map)['match_number'] as int? ?? 0)
               .compareTo((x.data() as Map)['match_number'] as int? ?? 0)));
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _bracketHeader('A-SLUTTSPILL', Colors.amber[800]!),
-            const SizedBox(height: 4),
-            ...forBracket('A').map(_buildPlayoffMatchRow),
-            const SizedBox(height: 20),
-            _bracketHeader('B-SLUTTSPILL', Colors.blue[700]!),
-            const SizedBox(height: 4),
-            ...forBracket('B').map(_buildPlayoffMatchRow),
-            const SizedBox(height: 20),
-            _bracketHeader('C-SLUTTSPILL', Colors.grey[700]!),
-            const SizedBox(height: 4),
-            ...forBracket('C').map(_buildPlayoffMatchRow),
-          ],
+        final bracketColors = {
+          'A': Colors.amber[800]!,
+          'B': Colors.blue[700]!,
+          'C': Colors.grey[700]!,
+        };
+        final bracketIcons = {
+          'A': Icons.emoji_events,
+          'B': Icons.workspace_premium,
+          'C': Icons.military_tech,
+        };
+
+        return DefaultTabController(
+          length: brackets.isEmpty ? 1 : brackets.length,
+          child: Column(
+            children: [
+              // Generate button
+              Container(
+                color: Colors.grey[50],
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.emoji_events, size: 16),
+                  label: const Text("Generer A/B/C Sluttspill"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF5A623),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 40),
+                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: _generatePlayoffs,
+                ),
+              ),
+
+              if (matches.isEmpty)
+                const Expanded(
+                  child: Center(
+                    child: Text(
+                      "Sluttspill ikke generert enda.\nFullfør gruppespillet og trykk knappen over.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                )
+              else ...[
+                // Sub-tab bar
+                Container(
+                  color: Colors.white,
+                  child: TabBar(
+                    indicatorColor: Colors.blue[900],
+                    labelColor: Colors.blue[900],
+                    unselectedLabelColor: Colors.grey,
+                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    tabs: brackets.map((b) => Tab(
+                      icon: Icon(bracketIcons[b] ?? Icons.emoji_events, size: 16),
+                      text: "$b-Bracket",
+                    )).toList(),
+                  ),
+                ),
+                const Divider(height: 1),
+
+                // Sub-tab content
+                Expanded(
+                  child: TabBarView(
+                    children: brackets.map((b) {
+                      final color = bracketColors[b] ?? Colors.grey[700]!;
+                      final bMatches = forBracket(b);
+                      return _buildBracketList(b, color, bMatches);
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _bracketHeader(String title, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
-      child: Text(title,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+  Widget _buildBracketList(String bracket, Color color, List<DocumentSnapshot> matches) {
+    // Group by round
+    final roundOrder = {'r16': 0, 'qf': 1, 'sf': 2, 'final': 3};
+    final roundLabels = {'r16': 'R16', 'qf': 'Kvartfinale', 'sf': 'Semifinale', 'final': 'FINALE'};
+
+    final Map<String, List<DocumentSnapshot>> byRound = {};
+    for (final m in matches) {
+      final r = (m.data() as Map)['round'] as String? ?? 'ukjent';
+      byRound.putIfAbsent(r, () => []).add(m);
+    }
+    final rounds = byRound.keys.toList()
+      ..sort((a, b) => (roundOrder[a] ?? 9).compareTo(roundOrder[b] ?? 9));
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        // Bracket header
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                bracket == 'A' ? Icons.emoji_events : bracket == 'B' ? Icons.workspace_premium : Icons.military_tech,
+                color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Text(
+                "$bracket-SLUTTSPILL",
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              const Spacer(),
+              Text(
+                "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}/${matches.length} kamper",
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+
+        // Rounds
+        for (final round in rounds) ...[
+          Container(
+            margin: const EdgeInsets.only(top: 8, bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: color.withOpacity(0.3)),
+            ),
+            child: Text(
+              roundLabels[round] ?? round.toUpperCase(),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 12, color: color),
+            ),
+          ),
+          ...byRound[round]!.map(_buildPlayoffMatchRow),
+        ],
+      ],
     );
   }
 
@@ -861,6 +1262,11 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 ),
               ),
             IconButton(
+              icon: const Icon(Icons.edit, size: 18, color: Colors.blueGrey),
+              tooltip: "Rediger kamp",
+              onPressed: () => _showMatchEditDialog(matchDoc),
+            ),
+            IconButton(
               icon: const Icon(Icons.qr_code, size: 18),
               tooltip: "QR",
               onPressed: () =>
@@ -898,6 +1304,68 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         title: Text("Admin: ${widget.tournamentName}"),
         backgroundColor: Colors.blue[900],
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.how_to_reg),
+            tooltip: "Påmeldinger",
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => RegistrationsPage(
+                  tournamentId: widget.tournamentId,
+                  tournamentName: widget.tournamentName,
+                  tournamentType: 'nt_master',
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit),
+            tooltip: "Rediger turnering",
+            onPressed: () async {
+              final doc = await FirebaseFirestore.instance
+                  .collection('tournaments')
+                  .doc(widget.tournamentId)
+                  .get();
+              if (!mounted) return;
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => EditTournamentPage(
+                    tournamentId: widget.tournamentId,
+                    initialData: doc.data() ?? {},
+                  ),
+                ),
+              );
+            },
+          ),
+          PopupMenuButton<String>(
+            tooltip: "Avanserte handlinger",
+            icon: const Icon(Icons.more_vert),
+            onSelected: (v) {
+              if (v == 'reset_groups') _resetGroupStage();
+              if (v == 'reset_playoffs') _resetPlayoffs();
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'reset_groups',
+                child: ListTile(
+                  leading: Icon(Icons.restart_alt, color: Colors.orange),
+                  title: Text("Nullstill gruppespill"),
+                  dense: true,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'reset_playoffs',
+                child: ListTile(
+                  leading: Icon(Icons.restart_alt, color: Colors.red),
+                  title: Text("Nullstill sluttspill"),
+                  dense: true,
+                ),
+              ),
+            ],
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.white,
@@ -907,6 +1375,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             Tab(icon: Icon(Icons.groups), text: "Lag"),
             Tab(icon: Icon(Icons.grid_view), text: "Grupper"),
             Tab(icon: Icon(Icons.emoji_events), text: "Sluttspill"),
+            Tab(icon: Icon(Icons.schedule), text: "Program"),
           ],
         ),
       ),
@@ -920,6 +1389,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 _buildTeamsTab(),
                 _buildGroupsTab(),
                 _buildPlayoffsTab(),
+                _buildScheduleTab(),
               ],
             ),
           ),
@@ -934,6 +1404,77 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               foregroundColor: Colors.white,
             )
           : null,
+    );
+  }
+
+  // ─── Program-fanen ────────────────────────────────────────────────────────
+
+  Widget _buildScheduleTab() {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('tournaments')
+          .doc(widget.tournamentId)
+          .snapshots(),
+      builder: (ctx, snap) {
+        final data = snap.data?.data() as Map<String, dynamic>? ?? {};
+        final courts = (data['courts_count'] as num?)?.toInt() ?? 4;
+        final duration = (data['match_duration_minutes'] as num?)?.toInt() ?? 60;
+
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.schedule, size: 56, color: Colors.blue[200]),
+                const SizedBox(height: 16),
+                Text(
+                  "Kampskjema & Kryssninger",
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue[900]),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Se hele turneringen samlet:\ntidskjema per bane, og alle kampkryssninger\ngjennom puljespill og sluttspill.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text("Åpne kampskjema"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[900],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 14),
+                    textStyle: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => TournamentSchedulePage(
+                        tournamentId: widget.tournamentId,
+                        tournamentName: widget.tournamentName,
+                        courtsCount: courts,
+                        matchDurationMinutes: duration,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  "$courts baner  •  $duration min per kamp",
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1058,6 +1599,11 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                               backgroundColor: Colors.blue[50],
                               visualDensity: VisualDensity.compact,
                             ),
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            tooltip: "Rediger / Flytt",
+                            onPressed: () => _showTeamEditDialog(sorted[i]),
+                          ),
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () => _confirmDeleteTeam(sorted[i].id, d['team_name'] ?? 'laget'),
@@ -1306,6 +1852,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             ),
           ),
           const SizedBox(width: 4),
+          // Edit button
+          IconButton(
+            icon: const Icon(Icons.edit, size: 18, color: Colors.blueGrey),
+            tooltip: "Rediger kamp",
+            onPressed: () => _showMatchEditDialog(matchDoc),
+          ),
           // QR button
           IconButton(
             icon: const Icon(Icons.qr_code, size: 20),
