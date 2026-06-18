@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/app_colors.dart';
+import 'theme/app_text_styles.dart';
 
 // ─── Turneringstyper med metadata ──────────────────────────────────────────
 class TournamentTypeConfig {
@@ -266,8 +268,6 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Ny Turnering"),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
       ),
       body: Center(
         child: ConstrainedBox(
@@ -291,17 +291,17 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
-                          color: selected ? t.color : Colors.grey[100],
+                          color: selected ? t.color : AppColors.adminTextSecondary,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: selected ? t.color : Colors.grey.shade300,
+                            color: selected ? t.color : AppColors.adminTextSecondary,
                             width: selected ? 2 : 1,
                           ),
                         ),
                         child: Text(
                           t.shortLabel,
                           style: TextStyle(
-                            color: selected ? Colors.white : Colors.black87,
+                            color: selected ? AppColors.adminText : AppColors.adminTextSecondary,
                             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
                             fontSize: 13,
                           ),
@@ -371,47 +371,72 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.calendar_today, size: 16),
-                        label: Text(
-                          _startDate == null ? "Startdato *" : _fmtDate(_startDate!),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      child: OutlinedButton(
                         onPressed: () => _pickDate('start'),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.calendar_today, size: 16),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _startDate == null ? "Startdato *" : _fmtDate(_startDate!),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.event, size: 16),
-                        label: Text(
-                          _endDate == null ? "Sluttdato *" : _fmtDate(_endDate!),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      child: OutlinedButton(
                         onPressed: () => _pickDate('end'),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.event, size: 16),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _endDate == null ? "Sluttdato *" : _fmtDate(_endDate!),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.lock_clock, size: 16, color: Colors.orange),
-                  label: Text(
-                    _registrationDeadline == null
-                        ? "Påmeldingsfrist *"
-                        : "Frist: ${_fmtDate(_registrationDeadline!)}",
-                    style: TextStyle(
-                      color: _registrationDeadline == null ? Colors.orange : null,
-                    ),
-                  ),
+                OutlinedButton(
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(
                       color: _registrationDeadline == null
-                          ? Colors.orange
-                          : Colors.grey.shade400,
+                          ? AppColors.adminOrange
+                          : AppColors.adminTextSecondary,
                     ),
                   ),
                   onPressed: () => _pickDate('deadline'),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.lock_clock, size: 16, color: AppColors.adminOrange),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _registrationDeadline == null
+                              ? "Påmeldingsfrist *"
+                              : "Frist: ${_fmtDate(_registrationDeadline!)}",
+                          style: TextStyle(
+                            color: _registrationDeadline == null ? AppColors.adminOrange : null,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
 
                 const SizedBox(height: 28),
@@ -468,7 +493,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     subtitle: const Text(
                         "Del lag i A/B/C-divisjoner basert på ranking"),
                     value: _hasDivisionPlay,
-                    activeColor: Colors.blue[800],
+                    activeColor: Theme.of(context).colorScheme.primary,
                     contentPadding: EdgeInsets.zero,
                     onChanged: (v) => setState(() => _hasDivisionPlay = v),
                   ),
@@ -493,9 +518,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.blue[50],
+                        color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.blue.shade200),
+                        border: Border.all(color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
                       ),
                       child: Text(
                         "Lag seedes automatisk etter rankingpoeng:\n"
@@ -503,7 +528,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                         "• Seed ${_div1Size + 1}–${_div1Size * 2} → 2. div (B)\n"
                         "• Seed ${_div1Size * 2 + 1}+ → 3. div (C)\n"
                         "Puljevinner B-div spiller playoff mot taper A-div (opprykk/nedrykk).",
-                        style: TextStyle(fontSize: 12, color: Colors.blue[800]),
+                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface),
                       ),
                     ),
                   ],
@@ -529,12 +554,12 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.blue[50],
+                    color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     "Oppretter automatisk: ${_categoryNames.join(' og ')}",
-                    style: TextStyle(fontSize: 12, color: Colors.blue[800]),
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface),
                   ),
                 ),
 
@@ -546,10 +571,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     icon: const Icon(Icons.save),
                     label: const Text("OPPRETT TURNERING"),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue[900],
-                      foregroundColor: Colors.white,
-                      textStyle: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
+                      textStyle: AppText.uiCta,
                     ),
                   ),
                 ),
@@ -571,21 +593,21 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: selected ? Colors.blue[900] : Colors.grey[100],
+            color: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).cardTheme.color,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: selected ? Colors.blue[900]! : Colors.grey.shade300,
+              color: selected ? Theme.of(context).colorScheme.primary : AppColors.line,
               width: selected ? 2 : 1,
             ),
           ),
           child: Column(
             children: [
-              Icon(icon, color: selected ? Colors.white : Colors.grey[600], size: 22),
+              Icon(icon, color: selected ? AppColors.adminText : AppColors.adminTextSecondary, size: 22),
               const SizedBox(height: 4),
               Text(
                 label,
                 style: TextStyle(
-                  color: selected ? Colors.white : Colors.black87,
+                  color: selected ? AppColors.adminText : AppColors.adminTextSecondary,
                   fontWeight: selected ? FontWeight.bold : FontWeight.normal,
                   fontSize: 13,
                 ),
@@ -599,7 +621,6 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
 
   Widget _sectionTitle(String text) => Text(
         text,
-        style:
-            const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        style: AppText.dispH2(),
       );
 }

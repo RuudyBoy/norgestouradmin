@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/app_colors.dart';
+import 'theme/app_text_styles.dart';
 
 class EditTournamentPage extends StatefulWidget {
   final String tournamentId;
@@ -170,8 +172,6 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Rediger turnering"),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
         actions: [
           if (_isSaving)
             const Padding(
@@ -180,13 +180,13 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                   width: 20,
                   height: 20,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white)),
+                      strokeWidth: 2, color: AppColors.adminText)),
             )
           else
             TextButton.icon(
               onPressed: _save,
-              icon: const Icon(Icons.save, color: Colors.white),
-              label: const Text("Lagre", style: TextStyle(color: Colors.white)),
+              icon: Icon(Icons.save, color: Theme.of(context).colorScheme.primary),
+              label: Text("Lagre", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
             ),
         ],
       ),
@@ -206,7 +206,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                       "Turneringsstatus",
                       _tournamentStatus,
                       {'upcoming': 'Kommende', 'active': 'Pågår', 'finished': 'Avsluttet'},
-                      {'upcoming': Colors.blue, 'active': Colors.green, 'finished': Colors.grey},
+                      {'upcoming': AppColors.adminOrange, 'active': AppColors.green, 'finished': AppColors.adminTextSecondary},
                       (v) => setState(() => _tournamentStatus = v),
                     ),
                   ),
@@ -216,7 +216,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                       "Påmelding",
                       _registrationStatus,
                       {'open': 'Åpen', 'closed': 'Lukket'},
-                      {'open': Colors.green, 'closed': Colors.red},
+                      {'open': AppColors.green, 'closed': AppColors.adminOrange},
                       (v) => setState(() => _registrationStatus = v),
                     ),
                   ),
@@ -246,7 +246,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
               ),
               const SizedBox(height: 8),
               _dateBtn("Påmeldingsfrist", _registrationDeadline, 'deadline',
-                  icon: Icons.lock_clock, color: Colors.orange),
+                  icon: Icons.lock_clock, color: AppColors.adminOrange),
 
               const SizedBox(height: 24),
               const Divider(),
@@ -318,7 +318,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                     style: TextStyle(fontWeight: FontWeight.w600)),
                 subtitle: const Text("A/B/C-divisjoner basert på ranking"),
                 value: _hasDivisionPlay,
-                activeColor: Colors.blue[800],
+                activeColor: Theme.of(context).colorScheme.primary,
                 contentPadding: EdgeInsets.zero,
                 onChanged: (v) => setState(() => _hasDivisionPlay = v),
               ),
@@ -360,10 +360,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                   icon: const Icon(Icons.save),
                   label: const Text("LAGRE ENDRINGER"),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[900],
-                    foregroundColor: Colors.white,
-                    textStyle: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold),
+                    textStyle: AppText.uiCta,
                   ),
                 ),
               ),
@@ -376,7 +373,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
   }
 
   Widget _section(String title) => Text(title,
-      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold));
+      style: AppText.dispH2());
 
   Widget _field(TextEditingController ctrl, String label, IconData icon) =>
       TextField(
@@ -389,7 +386,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
       );
 
   Widget _dateBtn(String label, DateTime? date, String which,
-      {IconData icon = Icons.calendar_today, Color color = Colors.grey}) =>
+      {IconData icon = Icons.calendar_today, Color color = AppColors.adminTextSecondary}) =>
       OutlinedButton.icon(
         icon: Icon(icon, size: 15, color: date != null ? null : color),
         label: Text(
@@ -398,7 +395,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
           overflow: TextOverflow.ellipsis,
         ),
         style: OutlinedButton.styleFrom(
-          side: BorderSide(color: date != null ? Colors.grey.shade400 : color),
+          side: BorderSide(color: date != null ? AppColors.adminTextSecondary : color),
         ),
         onPressed: () => _pickDate(which),
       );
@@ -410,7 +407,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     Map<String, Color> colors,
     void Function(String) onChanged,
   ) {
-    final color = colors[current] ?? Colors.grey;
+    final color = colors[current] ?? AppColors.adminTextSecondary;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -422,7 +419,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title,
-              style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+              style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary)),
           const SizedBox(height: 6),
           DropdownButton<String>(
             value: current,
@@ -434,7 +431,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                 .map((e) => DropdownMenuItem(
                     value: e.key,
                     child: Text(e.value,
-                        style: TextStyle(color: colors[e.key] ?? Colors.grey))))
+                        style: TextStyle(color: colors[e.key] ?? AppColors.adminTextSecondary))))
                 .toList(),
             onChanged: (v) => v != null ? onChanged(v) : null,
           ),
@@ -486,7 +483,7 @@ class _CategoryAdminDialog extends StatelessWidget {
                         onPressed: () => _editCategory(context, cat),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                        icon: const Icon(Icons.delete, size: 18, color: AppColors.adminOrange),
                         tooltip: "Slett",
                         onPressed: () => _deleteCategory(context, cat),
                       ),
@@ -505,7 +502,7 @@ class _CategoryAdminDialog extends StatelessWidget {
           icon: const Icon(Icons.add, size: 16),
           label: const Text("Ny klasse"),
           style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue[800], foregroundColor: Colors.white),
+              backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Theme.of(context).colorScheme.onPrimary),
           onPressed: () => _addCategory(context),
         ),
       ],
@@ -573,7 +570,7 @@ class _CategoryAdminDialog extends StatelessWidget {
               child: const Text("Avbryt")),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red, foregroundColor: Colors.white),
+                backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Slett"),
           ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/app_colors.dart';
 
 class RegistrationsPage extends StatefulWidget {
   final String tournamentId;
@@ -45,13 +46,13 @@ class _RegistrationsPageState extends State<RegistrationsPage>
   Color _statusColor(String status) {
     switch (status) {
       case 'accepted':
-        return Colors.green;
+        return AppColors.green;
       case 'waitlist':
-        return Colors.orange;
+        return AppColors.adminOrange;
       case 'rejected':
-        return Colors.red;
+        return AppColors.adminOrange;
       default:
-        return Colors.blue;
+        return AppColors.adminOrange;
     }
   }
 
@@ -117,7 +118,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
               child: const Text("Avbryt")),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green, foregroundColor: Colors.white),
+                backgroundColor: AppColors.green, foregroundColor: AppColors.adminText),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Godkjenn alle"),
           ),
@@ -172,14 +173,14 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                         child: Text("${i + 1}",
                             style: const TextStyle(
                                 fontSize: 11,
-                                color: Colors.white,
+                                color: AppColors.adminText,
                                 fontWeight: FontWeight.bold)),
                       ),
                       title: Text("$name1 & $name2",
                           style: const TextStyle(fontSize: 13)),
                       trailing: Text("$pts pts",
                           style: TextStyle(
-                              color: Colors.grey[600], fontSize: 12)),
+                              color: AppColors.adminTextSecondary, fontSize: 12)),
                     );
                   },
                 ),
@@ -194,10 +195,10 @@ class _RegistrationsPageState extends State<RegistrationsPage>
   }
 
   Color _seedColor(int seed) {
-    if (seed <= 4) return Colors.blue[800]!;
-    if (seed <= 16) return Colors.blue[500]!;
-    if (seed <= 32) return Colors.green[600]!;
-    return Colors.grey[500]!;
+    if (seed <= 4) return AppColors.adminOrange;
+    if (seed <= 16) return AppColors.adminOrange;
+    if (seed <= 32) return AppColors.green;
+    return AppColors.adminTextSecondary;
   }
 
   void _snack(String msg) =>
@@ -213,16 +214,16 @@ class _RegistrationsPageState extends State<RegistrationsPage>
             const Text("Påmeldinger", style: TextStyle(fontSize: 18)),
             Text(widget.tournamentName,
                 style:
-                    const TextStyle(fontSize: 12, color: Colors.white70)),
+                    const TextStyle(fontSize: 12, color: AppColors.adminTextSecondary)),
           ],
         ),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
+        
+        
         bottom: TabBar(
           controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white60,
-          indicatorColor: Colors.white,
+          labelColor: AppColors.adminText,
+          unselectedLabelColor: AppColors.adminTextSecondary,
+          indicatorColor: AppColors.adminText,
           tabs: const [
             Tab(text: "Oversikt", icon: Icon(Icons.list_alt, size: 16)),
             Tab(text: "Klasser", icon: Icon(Icons.category, size: 16)),
@@ -295,21 +296,21 @@ class _RegistrationsPageState extends State<RegistrationsPage>
           children: [
             // ── Stats-chips ─────────────────────────────────────────
             Container(
-              color: Colors.grey[50],
+              color: AppColors.adminTextSecondary,
               padding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
-                  _statChip("Alle", counts['all']!, 'all', Colors.grey[700]!),
+                  _statChip("Alle", counts['all']!, 'all', AppColors.adminTextSecondary),
                   const SizedBox(width: 6),
                   _statChip(
-                      "Venter", counts['pending']!, 'pending', Colors.blue),
+                      "Venter", counts['pending']!, 'pending', AppColors.adminOrange),
                   const SizedBox(width: 6),
                   _statChip("Godkjent", counts['accepted']!, 'accepted',
-                      Colors.green),
+                      AppColors.green),
                   const SizedBox(width: 6),
                   _statChip("Vente", counts['waitlist']!, 'waitlist',
-                      Colors.orange),
+                      AppColors.adminOrange),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.bar_chart),
@@ -318,9 +319,9 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                   ),
                   TextButton.icon(
                     icon: const Icon(Icons.check_circle,
-                        color: Colors.green, size: 16),
+                        color: AppColors.green, size: 16),
                     label: const Text("Godkjenn alle",
-                        style: TextStyle(color: Colors.green)),
+                        style: TextStyle(color: AppColors.green)),
                     onPressed: () => _acceptAllPending(all),
                   ),
                 ],
@@ -359,10 +360,10 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.inbox, size: 48, color: Colors.grey[300]),
+                          Icon(Icons.inbox, size: 48, color: AppColors.adminTextSecondary),
                           const SizedBox(height: 8),
                           Text("Ingen påmeldinger",
-                              style: TextStyle(color: Colors.grey[500])),
+                              style: TextStyle(color: AppColors.adminTextSecondary)),
                         ],
                       ),
                     )
@@ -397,13 +398,13 @@ class _RegistrationsPageState extends State<RegistrationsPage>
           color: selected ? color.withOpacity(0.15) : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: selected ? color : Colors.grey.shade300,
+            color: selected ? color : AppColors.adminTextSecondary,
           ),
         ),
         child: Text(
           "$label ($count)",
           style: TextStyle(
-            color: selected ? color : Colors.grey[600],
+            color: selected ? color : AppColors.adminTextSecondary,
             fontSize: 12,
             fontWeight:
                 selected ? FontWeight.bold : FontWeight.normal,
@@ -457,14 +458,14 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                           child: Text("$seedNum",
                               style: const TextStyle(
                                   fontSize: 11,
-                                  color: Colors.white,
+                                  color: AppColors.adminText,
                                   fontWeight: FontWeight.bold)),
                         )
                       : CircleAvatar(
                           radius: 16,
-                          backgroundColor: Colors.grey[200],
+                          backgroundColor: AppColors.adminTextSecondary,
                           child: Icon(Icons.help_outline,
-                              size: 14, color: Colors.grey[400]),
+                              size: 14, color: AppColors.adminTextSecondary),
                         ),
                 ),
                 const SizedBox(width: 12),
@@ -495,7 +496,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                               child: Text("WC",
                                   style: TextStyle(
                                       fontSize: 10,
-                                      color: Colors.purple[800],
+                                      color: AppColors.adminOrangeHover,
                                       fontWeight: FontWeight.bold)),
                             ),
                         ],
@@ -504,7 +505,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                       Text(
                         "$catName • $p1club / $p2club",
                         style: TextStyle(
-                            fontSize: 11, color: Colors.grey[600]),
+                            fontSize: 11, color: AppColors.adminTextSecondary),
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
@@ -512,7 +513,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                         "Ranking: $combined pts ($p1pts + $p2pts)",
                         style: TextStyle(
                             fontSize: 11,
-                            color: Colors.blue[700],
+                            color: AppColors.adminTextSecondary,
                             fontWeight: FontWeight.w500),
                       ),
                     ],
@@ -553,7 +554,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                 if (status != 'accepted')
                   _actionBtn(
                     "Godkjenn",
-                    Colors.green,
+                    AppColors.green,
                     Icons.check,
                     () => _updateStatus(doc.id, 'accepted'),
                   ),
@@ -561,7 +562,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                 if (status != 'waitlist')
                   _actionBtn(
                     "Venteliste",
-                    Colors.orange,
+                    AppColors.adminOrange,
                     Icons.hourglass_top,
                     () => _updateStatus(doc.id, 'waitlist'),
                   ),
@@ -569,7 +570,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                 if (status != 'rejected')
                   _actionBtn(
                     "Avvis",
-                    Colors.red,
+                    AppColors.adminOrange,
                     Icons.close,
                     () => _updateStatus(doc.id, 'rejected'),
                   ),
@@ -656,9 +657,9 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text("Maks $maxTeams lag"),
                 leading: const CircleAvatar(
-                  backgroundColor: Colors.blue,
+                  backgroundColor: AppColors.adminOrange,
                   child: Icon(Icons.sports_volleyball,
-                      color: Colors.white, size: 18),
+                      color: AppColors.adminText, size: 18),
                 ),
                 children: [
                   _buildCategoryRegistrations(cat.id, catName, maxTeams),
@@ -700,13 +701,13 @@ class _RegistrationsPageState extends State<RegistrationsPage>
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  _miniStat("Påmeldt", docs.length, Colors.grey[700]!),
+                  _miniStat("Påmeldt", docs.length, AppColors.adminTextSecondary),
                   const SizedBox(width: 12),
-                  _miniStat("Godkjent", acceptedCount, Colors.green),
+                  _miniStat("Godkjent", acceptedCount, AppColors.green),
                   const SizedBox(width: 12),
-                  _miniStat("Venter", pendingCount, Colors.blue),
+                  _miniStat("Venter", pendingCount, AppColors.adminOrange),
                   const SizedBox(width: 12),
-                  _miniStat("Plasser", maxTeams, Colors.grey[400]!),
+                  _miniStat("Plasser", maxTeams, AppColors.adminTextSecondary),
                 ],
               ),
             ),
@@ -714,7 +715,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text("Ingen påmeldinger i $catName",
-                    style: TextStyle(color: Colors.grey[500])),
+                    style: TextStyle(color: AppColors.adminTextSecondary)),
               )
             else
               ...docs.map((doc) {
@@ -736,7 +737,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                   fontWeight: FontWeight.bold,
                   fontSize: 16)),
           Text(label,
-              style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+              style: TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
         ],
       );
 }

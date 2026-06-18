@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/app_colors.dart';
 
 class PlayerClaimsPage extends StatelessWidget {
   const PlayerClaimsPage({super.key});
@@ -23,13 +24,13 @@ class PlayerClaimsPage extends StatelessWidget {
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Krav godkjent!'), backgroundColor: Colors.green),
+          const SnackBar(content: Text('Krav godkjent!'), backgroundColor: AppColors.green),
         );
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Feil: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Feil: $e'), backgroundColor: AppColors.adminOrange),
         );
       }
     }
@@ -43,13 +44,13 @@ class PlayerClaimsPage extends StatelessWidget {
       });
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Krav avvist.'), backgroundColor: Colors.orange),
+          const SnackBar(content: Text('Krav avvist.'), backgroundColor: AppColors.adminOrange),
         );
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Feil: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Feil: $e'), backgroundColor: AppColors.adminOrange),
         );
       }
     }
@@ -60,8 +61,8 @@ class PlayerClaimsPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ventende Spillerkrav'),
-        backgroundColor: Colors.blue[800],
-        foregroundColor: Colors.white,
+        backgroundColor: AppColors.adminOrange,
+        
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
@@ -77,7 +78,7 @@ class PlayerClaimsPage extends StatelessWidget {
             return const Center(
               child: Text(
                 'Ingen ventende krav akkurat nå.',
-                style: TextStyle(fontSize: 16, color: Colors.grey),
+                style: TextStyle(fontSize: 16, color: AppColors.adminTextSecondary),
               ),
             );
           }
@@ -101,7 +102,7 @@ class PlayerClaimsPage extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
                   contentPadding: const EdgeInsets.all(16),
-                  leading: const Icon(Icons.person_add, size: 40, color: Colors.blue),
+                  leading: const Icon(Icons.person_add, size: 40, color: AppColors.adminOrange),
                   title: Text(
                     '$userName ber om å bli koblet til $playerName',
                     style: const TextStyle(fontWeight: FontWeight.bold),
@@ -110,15 +111,15 @@ class PlayerClaimsPage extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 8),
-                      Text('Bruker-ID: $uid', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      Text('Spiller-ID: $playerId', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      Text('Bruker-ID: $uid', style: const TextStyle(fontSize: 12, color: AppColors.adminTextSecondary)),
+                      Text('Spiller-ID: $playerId', style: const TextStyle(fontSize: 12, color: AppColors.adminTextSecondary)),
                     ],
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.close, color: Colors.red),
+                        icon: const Icon(Icons.close, color: AppColors.adminOrange),
                         tooltip: 'Avvis',
                         onPressed: () => _rejectClaim(context, claimId),
                       ),
@@ -127,8 +128,8 @@ class PlayerClaimsPage extends StatelessWidget {
                         icon: const Icon(Icons.check),
                         label: const Text('Godkjenn'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
+                          backgroundColor: AppColors.green,
+                          
                         ),
                         onPressed: () => _approveClaim(context, claimId, uid, playerId),
                       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import 'main.dart'; // For å kunne navigere tilbake til Dashboard
+import 'theme/app_colors.dart';
 
 class AllPlayersPage extends StatefulWidget {
   const AllPlayersPage({super.key});
@@ -45,12 +46,12 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     // --- FORHÅNDSVISNING AV BILDE ---
                     CircleAvatar(
                       radius: 40,
-                      backgroundColor: Colors.grey[200],
+                      backgroundColor: AppColors.adminTextSecondary,
                       backgroundImage: imageUrlController.text.isNotEmpty
                           ? NetworkImage(imageUrlController.text)
                           : null,
                       child: imageUrlController.text.isEmpty
-                          ? const Icon(Icons.person, size: 40, color: Colors.grey)
+                          ? const Icon(Icons.person, size: 40, color: AppColors.adminTextSecondary)
                           : null,
                     ),
                     const SizedBox(height: 16),
@@ -141,8 +142,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: docId != null ? Colors.orange[800] : Colors.green[800],
-                    foregroundColor: Colors.white,
+                    backgroundColor: docId != null ? AppColors.adminOrangeHover : AppColors.green,
+                    
                   ),
                   child: Text(docId != null ? "Oppdater" : "Lagre"),
                 ),
@@ -159,8 +160,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Spillerdatabase"),
-        backgroundColor: Colors.green[800],
-        foregroundColor: Colors.white,
+        backgroundColor: AppColors.green,
+        
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add_alt_1),
@@ -239,13 +240,13 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
           padding: EdgeInsets.zero,
           children: [
             DrawerHeader(
-              decoration: BoxDecoration(color: Colors.green[800]),
+              decoration: BoxDecoration(color: AppColors.green),
               child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text("Spike Dunk Admin", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  Text("Spillerdatabase", style: TextStyle(color: Colors.white70)),
+                  Text("Spike Dunk Admin", style: TextStyle(color: AppColors.adminText, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text("Spillerdatabase", style: TextStyle(color: AppColors.adminTextSecondary)),
                 ],
               ),
             ),
@@ -264,7 +265,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
               leading: const Icon(Icons.people),
               title: const Text('Spillerdatabase'),
               selected: true,
-              selectedTileColor: Colors.green[100],
+              selectedTileColor: AppColors.green.withOpacity(0.2),
               onTap: () {
                 Navigator.pop(context);
               },
@@ -276,8 +277,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
         onPressed: () => _showPlayerDialog(),
         label: const Text("Ny Spiller"),
         icon: const Icon(Icons.person_add),
-        backgroundColor: Colors.green[800],
-        foregroundColor: Colors.white,
+        backgroundColor: AppColors.green,
+        
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('players').orderBy('first_name').snapshots(),
@@ -307,7 +308,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                   onTap: () => _showPlayerDialog(docId: docId, existingData: data),
                   leading: CircleAvatar(
                     radius: 25,
-                    backgroundColor: Colors.green[100],
+                    backgroundColor: AppColors.green.withOpacity(0.2),
                     backgroundImage: (imageUrl.isNotEmpty) 
                         ? NetworkImage(imageUrl) 
                         : null,
@@ -320,10 +321,10 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.edit, color: Colors.orange, size: 20),
+                      const Icon(Icons.edit, color: AppColors.adminOrange, size: 20),
                       const SizedBox(width: 16),
                       IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.grey),
+                        icon: const Icon(Icons.delete, color: AppColors.adminTextSecondary),
                         onPressed: () {
                            FirebaseFirestore.instance.collection('players').doc(docId).delete();
                         },

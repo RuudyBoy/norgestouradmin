@@ -6,6 +6,7 @@ import 'simulator_logic.dart';
 import 'registrations_page.dart';
 import 'edit_tournament_page.dart';
 import 'tournament_schedule_page.dart';
+import 'theme/app_colors.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -44,7 +45,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   void _snack(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: isError ? Colors.red[700] : null,
+      backgroundColor: isError ? AppColors.adminOrangeHover : null,
     ));
   }
 
@@ -225,7 +226,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
           onPressed: () {
             FirebaseFirestore.instance.collection('teams').doc(teamId).delete();
             Navigator.pop(ctx);
@@ -245,7 +246,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         const SizedBox(height: 16),
         SizedBox(height: 200, width: 200, child: QrImageView(data: url, version: QrVersions.auto, size: 200)),
         const SizedBox(height: 12),
-        SelectableText(url, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+        SelectableText(url, style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
       ]),
       actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Lukk"))],
     ));
@@ -493,7 +494,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Nullstill"),
           ),
@@ -539,7 +540,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Nullstill"),
           ),
@@ -1039,8 +1040,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
         final bracketColors = {
           'A': Colors.amber[800]!,
-          'B': Colors.blue[700]!,
-          'C': Colors.grey[700]!,
+          'B': AppColors.adminTextSecondary!,
+          'C': AppColors.adminTextSecondary,
         };
         final bracketIcons = {
           'A': Icons.emoji_events,
@@ -1054,14 +1055,14 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             children: [
               // Generate button
               Container(
-                color: Colors.grey[50],
+                color: AppColors.adminTextSecondary,
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.emoji_events, size: 16),
                   label: const Text("Generer A/B/C Sluttspill"),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFF5A623),
-                    foregroundColor: Colors.white,
+                    
                     minimumSize: const Size(double.infinity, 40),
                     textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                   ),
@@ -1075,18 +1076,18 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     child: Text(
                       "Sluttspill ikke generert enda.\nFullfør gruppespillet og trykk knappen over.",
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
+                      style: TextStyle(color: AppColors.adminTextSecondary),
                     ),
                   ),
                 )
               else ...[
                 // Sub-tab bar
                 Container(
-                  color: Colors.white,
+                  color: AppColors.adminText,
                   child: TabBar(
-                    indicatorColor: Colors.blue[900],
-                    labelColor: Colors.blue[900],
-                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: AppColors.adminText,
+                    labelColor: AppColors.adminText,
+                    unselectedLabelColor: AppColors.adminTextSecondary,
                     labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     tabs: brackets.map((b) => Tab(
                       icon: Icon(bracketIcons[b] ?? Icons.emoji_events, size: 16),
@@ -1100,7 +1101,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 Expanded(
                   child: TabBarView(
                     children: brackets.map((b) {
-                      final color = bracketColors[b] ?? Colors.grey[700]!;
+                      final color = bracketColors[b] ?? AppColors.adminTextSecondary;
                       final bMatches = forBracket(b);
                       return _buildBracketList(b, color, bMatches);
                     }).toList(),
@@ -1142,17 +1143,17 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             children: [
               Icon(
                 bracket == 'A' ? Icons.emoji_events : bracket == 'B' ? Icons.workspace_premium : Icons.military_tech,
-                color: Colors.white, size: 20),
+                color: AppColors.adminText, size: 20),
               const SizedBox(width: 10),
               Text(
                 "$bracket-SLUTTSPILL",
                 style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                    color: AppColors.adminText, fontWeight: FontWeight.bold, fontSize: 15),
               ),
               const Spacer(),
               Text(
                 "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}/${matches.length} kamper",
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                style: const TextStyle(color: AppColors.adminTextSecondary, fontSize: 11),
               ),
             ],
           ),
@@ -1206,10 +1207,10 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Kamp $num', style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                  Text('Kamp $num', style: TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
                   Text(roundLabel,
                       style: TextStyle(
-                          fontSize: 11, color: Colors.blue[900], fontWeight: FontWeight.bold)),
+                          fontSize: 11, color: AppColors.adminText, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -1221,7 +1222,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     d['team_a_name'] ?? 'TBD',
                     style: TextStyle(
                       fontSize: 12,
-                      color: isPending ? Colors.grey[500] : null,
+                      color: isPending ? AppColors.adminTextSecondary: null,
                       fontStyle: isPending ? FontStyle.italic : null,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -1230,7 +1231,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     d['team_b_name'] ?? 'TBD',
                     style: TextStyle(
                       fontSize: 12,
-                      color: isPending ? Colors.grey[500] : null,
+                      color: isPending ? AppColors.adminTextSecondary: null,
                       fontStyle: isPending ? FontStyle.italic : null,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -1243,7 +1244,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 child: Text(
                   '${d['home_score']} – ${d['away_score']}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.green),
                 ),
               )
             else
@@ -1251,18 +1252,18 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 margin: const EdgeInsets.symmetric(horizontal: 4),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: isPending ? Colors.grey[200] : Colors.blue[50],
+                  color: isPending ? AppColors.adminTextSecondary: AppColors.adminSurfaceElevated,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   isPending ? 'Venter' : 'Planlagt',
                   style: TextStyle(
                       fontSize: 10,
-                      color: isPending ? Colors.grey[600] : Colors.blue[800]),
+                      color: isPending ? AppColors.adminTextSecondary: AppColors.adminOrange),
                 ),
               ),
             IconButton(
-              icon: const Icon(Icons.edit, size: 18, color: Colors.blueGrey),
+              icon: const Icon(Icons.edit, size: 18, color: AppColors.adminTextSecondary),
               tooltip: "Rediger kamp",
               onPressed: () => _showMatchEditDialog(matchDoc),
             ),
@@ -1274,7 +1275,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             ),
             IconButton(
               icon: Icon(Icons.sports_esports,
-                  size: 18, color: isPlaceholder ? Colors.grey : Colors.green),
+                  size: 18, color: isPlaceholder ? AppColors.adminTextSecondary : AppColors.green),
               tooltip: "Styr kamp",
               onPressed: isPlaceholder
                   ? null
@@ -1302,8 +1303,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     return Scaffold(
       appBar: AppBar(
         title: Text("Admin: ${widget.tournamentName}"),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
+        
+        
         actions: [
           IconButton(
             icon: const Icon(Icons.how_to_reg),
@@ -1350,7 +1351,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               const PopupMenuItem(
                 value: 'reset_groups',
                 child: ListTile(
-                  leading: Icon(Icons.restart_alt, color: Colors.orange),
+                  leading: Icon(Icons.restart_alt, color: AppColors.adminOrange),
                   title: Text("Nullstill gruppespill"),
                   dense: true,
                 ),
@@ -1358,7 +1359,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               const PopupMenuItem(
                 value: 'reset_playoffs',
                 child: ListTile(
-                  leading: Icon(Icons.restart_alt, color: Colors.red),
+                  leading: Icon(Icons.restart_alt, color: AppColors.adminOrange),
                   title: Text("Nullstill sluttspill"),
                   dense: true,
                 ),
@@ -1368,9 +1369,9 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         ],
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
+          indicatorColor: AppColors.adminText,
+          labelColor: AppColors.adminText,
+          unselectedLabelColor: AppColors.adminTextSecondary,
           tabs: const [
             Tab(icon: Icon(Icons.groups), text: "Lag"),
             Tab(icon: Icon(Icons.grid_view), text: "Grupper"),
@@ -1400,8 +1401,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               onPressed: _showAddTeamDialog,
               label: const Text("Nytt Lag"),
               icon: const Icon(Icons.group_add),
-              backgroundColor: Colors.blue[900],
-              foregroundColor: Colors.white,
+              
+              
             )
           : null,
     );
@@ -1426,28 +1427,28 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.schedule, size: 56, color: Colors.blue[200]),
+                Icon(Icons.schedule, size: 56, color: AppColors.adminOrange),
                 const SizedBox(height: 16),
                 Text(
                   "Kampskjema & Kryssninger",
                   style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Colors.blue[900]),
+                      color: AppColors.adminText),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   "Se hele turneringen samlet:\ntidskjema per bane, og alle kampkryssninger\ngjennom puljespill og sluttspill.",
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 13, color: AppColors.adminTextSecondary),
                 ),
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.open_in_new),
                   label: const Text("Åpne kampskjema"),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[900],
-                    foregroundColor: Colors.white,
+                    
+                    
                     padding: const EdgeInsets.symmetric(
                         horizontal: 24, vertical: 14),
                     textStyle: const TextStyle(
@@ -1468,7 +1469,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 const SizedBox(height: 12),
                 Text(
                   "$courts baner  •  $duration min per kamp",
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary),
                 ),
               ],
             ),
@@ -1480,7 +1481,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
   Widget _buildCategorySelector() {
     return Container(
-      color: Colors.blue[50],
+      color: AppColors.adminSurfaceElevated,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
@@ -1494,7 +1495,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             return const Padding(
               padding: EdgeInsets.all(8),
               child: Text("Ingen klasser funnet. Legg til klasser ved turneringsopprettelse.",
-                  style: TextStyle(color: Colors.red)),
+                  style: TextStyle(color: AppColors.adminOrange)),
             );
           }
 
@@ -1546,7 +1547,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           child: ElevatedButton.icon(
             icon: const Icon(Icons.auto_awesome),
             label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple[800], foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrangeHover, foregroundColor: AppColors.adminText),
             onPressed: _autoGenerateTeams,
           ),
         ),
@@ -1583,7 +1584,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                   return Card(
                     child: ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: seed != null ? Colors.blue[100] : Colors.grey[200],
+                        backgroundColor: seed != null ? AppColors.adminSurfaceElevated : AppColors.adminTextSecondary,
                         child: Text(seed?.toString() ?? '-',
                             style: const TextStyle(fontWeight: FontWeight.bold)),
                       ),
@@ -1596,16 +1597,16 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                           if (group != null)
                             Chip(
                               label: Text("Pulje $group${placement != null ? ' • $placement.' : ''}"),
-                              backgroundColor: Colors.blue[50],
+                              backgroundColor: AppColors.adminSurfaceElevated,
                               visualDensity: VisualDensity.compact,
                             ),
                           IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            icon: const Icon(Icons.edit, color: AppColors.adminOrange),
                             tooltip: "Rediger / Flytt",
                             onPressed: () => _showTeamEditDialog(sorted[i]),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
+                            icon: const Icon(Icons.delete, color: AppColors.adminOrange),
                             onPressed: () => _confirmDeleteTeam(sorted[i].id, d['team_name'] ?? 'laget'),
                           ),
                         ],
@@ -1642,7 +1643,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 icon: const Icon(Icons.shuffle, size: 16),
                 label: const Text("Generer Grupper\n(Runde 1)"),
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[900], foregroundColor: Colors.white,
+                     
                     textStyle: const TextStyle(fontSize: 12)),
                 onPressed: _generateGroupStage,
               ),
@@ -1650,7 +1651,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 icon: const Icon(Icons.play_arrow, size: 16),
                 label: const Text("Sett opp\nRunde 2"),
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange[800], foregroundColor: Colors.white,
+                    backgroundColor: AppColors.adminOrangeHover, 
                     textStyle: const TextStyle(fontSize: 12)),
                 onPressed: _generateGroupRound2,
               ),
@@ -1658,7 +1659,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 icon: const Icon(Icons.leaderboard, size: 16),
                 label: const Text("Beregn\nPlasseringer"),
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[800], foregroundColor: Colors.white,
+                    backgroundColor: AppColors.green, 
                     textStyle: const TextStyle(fontSize: 12)),
                 onPressed: _finalizePlacements,
               ),
@@ -1666,7 +1667,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 icon: const Icon(Icons.auto_awesome, size: 16),
                 label: const Text("Simuler\nAlt"),
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple[800], foregroundColor: Colors.white,
+                    backgroundColor: AppColors.adminOrangeHover, 
                     textStyle: const TextStyle(fontSize: 12)),
                 onPressed: _simulateAll,
               ),
@@ -1749,9 +1750,9 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        color: Colors.blue[900],
+                        color: AppColors.adminText,
                         child: Text("Pulje $groupName",
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                            style: const TextStyle(color: AppColors.adminText, fontWeight: FontWeight.bold, fontSize: 16)),
                       ),
                       // Teams
                       ...groupTeams.asMap().entries.map((e) {
@@ -1764,8 +1765,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                           leading: CircleAvatar(
                             radius: 14,
                             backgroundColor: placement != null
-                                ? [Colors.amber[700], Colors.grey[400], Colors.brown[400], Colors.grey[300]][placement - 1]
-                                : Colors.blue[100],
+                                ? [Colors.amber[700], AppColors.adminTextSecondary, Colors.brown[400], AppColors.adminTextSecondary][placement - 1]
+                                : AppColors.adminSurfaceElevated,
                             child: Text(
                               placement?.toString() ?? (idx + 1).toString(),
                               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
@@ -1782,12 +1783,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                       Padding(
                         padding: const EdgeInsets.all(8),
                         child: Text("KAMPER",
-                            style: TextStyle(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.bold)),
+                            style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary, fontWeight: FontWeight.bold)),
                       ),
                       if (groupMatches.isEmpty)
                         const Padding(
                           padding: EdgeInsets.all(12),
-                          child: Text("Ingen kamper enda.", style: TextStyle(color: Colors.grey)),
+                          child: Text("Ingen kamper enda.", style: TextStyle(color: AppColors.adminTextSecondary)),
                         )
                       else
                         ...groupMatches.map((m) => _buildMatchRow(m)),
@@ -1824,7 +1825,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: TextStyle(fontSize: 10, color: Colors.blue[900], fontWeight: FontWeight.bold)),
+                Text(label, style: TextStyle(fontSize: 10, color: AppColors.adminText, fontWeight: FontWeight.bold)),
                 Text(
                   "${d['team_a_name'] ?? 'TBD'} vs ${d['team_b_name'] ?? 'TBD'}",
                   style: const TextStyle(fontSize: 13),
@@ -1832,7 +1833,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 ),
                 if (isFinished)
                   Text("${d['home_score']} – ${d['away_score']}",
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.green)),
               ],
             ),
           ),
@@ -1840,21 +1841,21 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: isFinished ? Colors.green[100] : (status == 'live' ? Colors.red[100] : Colors.grey[200]),
+              color: isFinished ? AppColors.green.withOpacity(0.2) : (status == 'live' ? AppColors.adminOrange.withOpacity(0.2) : AppColors.adminTextSecondary),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               isFinished ? 'Ferdig' : (status == 'live' ? 'LIVE' : 'Planlagt'),
               style: TextStyle(
                 fontSize: 10,
-                color: isFinished ? Colors.green[800] : (status == 'live' ? Colors.red[800] : Colors.grey[600]),
+                color: isFinished ? AppColors.green : (status == 'live' ? AppColors.adminOrangeHover : AppColors.adminTextSecondary),
               ),
             ),
           ),
           const SizedBox(width: 4),
           // Edit button
           IconButton(
-            icon: const Icon(Icons.edit, size: 18, color: Colors.blueGrey),
+            icon: const Icon(Icons.edit, size: 18, color: AppColors.adminTextSecondary),
             tooltip: "Rediger kamp",
             onPressed: () => _showMatchEditDialog(matchDoc),
           ),
@@ -1866,7 +1867,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           ),
           // Control button
           IconButton(
-            icon: Icon(Icons.sports_esports, size: 20, color: isPlaceholder ? Colors.grey : Colors.green),
+            icon: Icon(Icons.sports_esports, size: 20, color: isPlaceholder ? AppColors.adminTextSecondary : AppColors.green),
             tooltip: "Styr kamp",
             onPressed: isPlaceholder ? null : () => Navigator.push(
               context,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/app_text_styles.dart';
+import 'theme/app_colors.dart';
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
@@ -70,20 +72,20 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: Colors.transparent,
       body: Center(
         child: SingleChildScrollView(
           child: Container(
             constraints: const BoxConstraints(maxWidth: 400),
             padding: const EdgeInsets.all(32),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              color: Theme.of(context).cardTheme.color,
+              borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black12,
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+                  color: AppColors.adminText.withOpacity(0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
                 )
               ],
             ),
@@ -91,18 +93,18 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(Icons.security, size: 64, color: Colors.blue),
+                Icon(Icons.security, size: 64, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   "Spike Dunk Admin",
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  style: AppText.dispH1(),
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   "Logg inn for å administrere turneringer",
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
+                  style: AppText.uiBody.copyWith(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
                 ),
                 const SizedBox(height: 32),
                 TextField(
@@ -131,33 +133,28 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 24),
                     decoration: BoxDecoration(
-                      color: Colors.red[50],
-                      border: Border.all(color: Colors.red[200]!),
+                      color: AppColors.adminOrange,
+                      border: Border.all(color: AppColors.adminOrange!),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       _errorMessage!,
-                      style: TextStyle(color: Colors.red[800]),
+                      style: TextStyle(color: AppColors.adminOrangeHover),
                       textAlign: TextAlign.center,
                     ),
                   ),
                 ElevatedButton(
                   onPressed: _isLoading ? null : _login,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[800],
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
                   child: _isLoading
                       ? const SizedBox(
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: AppColors.adminText,
                           ),
                         )
-                      : const Text("Logg inn", style: TextStyle(fontSize: 16)),
+                      : const Text("Logg inn"),
                 ),
               ],
             ),

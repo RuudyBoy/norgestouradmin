@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/app_colors.dart';
 
 class TournamentSchedulePage extends StatefulWidget {
   final String tournamentId;
@@ -42,7 +43,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
   void _snack(String msg, {bool isError = false}) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(msg),
-        backgroundColor: isError ? Colors.red[700] : null,
+        backgroundColor: isError ? AppColors.adminOrangeHover : null,
       ));
 
   String _fmtTime(int totalMinutes) {
@@ -179,13 +180,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
     return Scaffold(
       appBar: AppBar(
         title: Text("Kampskjema – ${widget.tournamentName}"),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
+        
+        
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
+          indicatorColor: AppColors.adminText,
+          labelColor: AppColors.adminText,
+          unselectedLabelColor: AppColors.adminTextSecondary,
           tabs: const [
             Tab(icon: Icon(Icons.schedule), text: "Tidskjema"),
             Tab(icon: Icon(Icons.account_tree), text: "Kryssninger"),
@@ -198,13 +199,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               child: SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                  child: CircularProgressIndicator(color: AppColors.adminText, strokeWidth: 2)),
             )
           else
             TextButton.icon(
               onPressed: _showGenerateDialog,
-              icon: const Icon(Icons.auto_fix_high, color: Colors.white),
-              label: const Text("Auto-skjema", style: TextStyle(color: Colors.white)),
+              icon: const Icon(Icons.auto_fix_high, color: AppColors.adminText),
+              label: const Text("Auto-skjema", style: TextStyle(color: AppColors.adminText)),
             ),
         ],
       ),
@@ -245,11 +246,11 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
         }
 
         return Container(
-          color: Colors.blue[50],
+          color: AppColors.adminSurfaceElevated,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
             children: [
-              const Icon(Icons.category, size: 16, color: Colors.blue),
+              const Icon(Icons.category, size: 16, color: AppColors.adminOrange),
               const SizedBox(width: 8),
               const Text("Klasse:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(width: 12),
@@ -292,13 +293,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.schedule, size: 48, color: Colors.grey[400]),
+                Icon(Icons.schedule, size: 48, color: AppColors.adminTextSecondary),
                 const SizedBox(height: 12),
                 const Text("Ingen kamper generert enda.",
-                    style: TextStyle(fontSize: 15, color: Colors.grey)),
+                    style: TextStyle(fontSize: 15, color: AppColors.adminTextSecondary)),
                 const SizedBox(height: 6),
                 const Text("Generer grupper og sluttspill først.",
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: TextStyle(fontSize: 12, color: AppColors.adminTextSecondary)),
               ],
             ),
           );
@@ -346,7 +347,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
           margin: const EdgeInsets.only(top: 16, bottom: 8),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.blue[900],
+            color: AppColors.adminText,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
@@ -354,13 +355,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               Expanded(
                 child: Text(label,
                     style: const TextStyle(
-                        color: Colors.white,
+                        color: AppColors.adminText,
                         fontWeight: FontWeight.bold,
                         fontSize: 13)),
               ),
               if (firstTime != null)
                 Text("fra $firstTime",
-                    style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                    style: const TextStyle(color: AppColors.adminTextSecondary, fontSize: 11)),
             ],
           ),
         ),
@@ -402,7 +403,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
-                    color: Colors.blue[900],
+                    color: AppColors.adminText,
                   ),
                 ),
               ),
@@ -432,9 +433,9 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
     final group = d['group'] as String?;
     final bracket = d['bracket'] as String?;
 
-    Color borderColor = Colors.grey.shade300;
-    if (isFinished) borderColor = Colors.green.shade300;
-    if (status == 'live') borderColor = Colors.red.shade400;
+    Color borderColor = AppColors.adminTextSecondary;
+    if (isFinished) borderColor = AppColors.green;
+    if (status == 'live') borderColor = AppColors.adminOrange;
 
     return GestureDetector(
       onTap: () => _editMatchDialog(matchDoc),
@@ -445,10 +446,10 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
           border: Border.all(color: borderColor, width: 1.5),
           borderRadius: BorderRadius.circular(8),
           color: isFinished
-              ? Colors.green.shade50
+              ? AppColors.green.withOpacity(0.1)
               : isPending
-                  ? Colors.grey.shade100
-                  : Colors.white,
+                  ? AppColors.adminTextSecondary
+                  : AppColors.adminText,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -460,16 +461,16 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                     style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
-                        color: Colors.blue[700])),
+                        color: AppColors.adminTextSecondary)),
                 const Spacer(),
                 if (group != null)
-                  _tag("Pulje $group", Colors.blue.shade100, Colors.blue.shade800)
+                  _tag("Pulje $group", AppColors.adminSurfaceElevated, AppColors.adminText)
                 else if (bracket != null)
-                  _tag("$bracket-bracket", Colors.purple.shade100, Colors.purple.shade800),
+                  _tag("$bracket-bracket", AppColors.adminOrangeHover.withOpacity(0.2), AppColors.adminOrangeHover),
                 if (isFinished)
-                  _tag("Ferdig", Colors.green.shade100, Colors.green.shade800)
+                  _tag("Ferdig", AppColors.green.withOpacity(0.2), AppColors.green)
                 else if (status == 'live')
-                  _tag("LIVE", Colors.red.shade100, Colors.red.shade800),
+                  _tag("LIVE", AppColors.adminOrange.withOpacity(0.2), AppColors.adminOrangeHover),
               ],
             ),
             const SizedBox(height: 6),
@@ -479,7 +480,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
-                color: isPending ? Colors.grey : null,
+                color: isPending ? AppColors.adminTextSecondary : null,
                 fontStyle: isPending ? FontStyle.italic : null,
               ),
               overflow: TextOverflow.ellipsis,
@@ -492,7 +493,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
-                      color: isPending ? Colors.grey : null,
+                      color: isPending ? AppColors.adminTextSecondary : null,
                       fontStyle: isPending ? FontStyle.italic : null,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -504,7 +505,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                     style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
-                        color: Colors.green),
+                        color: AppColors.green),
                   ),
               ],
             ),
@@ -561,13 +562,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
           padding: const EdgeInsets.all(12),
           children: [
             if (group.isNotEmpty) ...[
-              _sectionHeader("Puljespill", Icons.grid_view, Colors.blue[900]!),
+              _sectionHeader("Puljespill", Icons.grid_view, AppColors.adminText!),
               const SizedBox(height: 8),
               _buildGroupCrossings(group),
             ],
             if (playoff.isNotEmpty) ...[
               const SizedBox(height: 16),
-              _sectionHeader("Sluttspill (bracket)", Icons.account_tree, Colors.purple[800]!),
+              _sectionHeader("Sluttspill (bracket)", Icons.account_tree, AppColors.adminOrangeHover!),
               const SizedBox(height: 8),
               _buildPlayoffCrossings(playoff),
             ],
@@ -583,11 +584,11 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             color: color, borderRadius: BorderRadius.circular(8)),
         child: Row(
           children: [
-            Icon(icon, color: Colors.white, size: 16),
+            Icon(icon, color: AppColors.adminText, size: 16),
             const SizedBox(width: 8),
             Text(title,
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: AppColors.adminText,
                     fontWeight: FontWeight.bold,
                     fontSize: 13)),
           ],
@@ -609,7 +610,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
-            border: Border.all(color: Colors.blue.shade200),
+            border: Border.all(color: AppColors.adminSurfaceElevated),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
@@ -618,14 +619,14 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
+                  color: AppColors.adminSurfaceElevated,
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                 ),
                 child: Text("Pulje $group",
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
-                        color: Colors.blue[900])),
+                        color: AppColors.adminText)),
               ),
               ...gMatches.map((m) => _crossingRow(m, isPlayoff: false)),
             ],
@@ -647,10 +648,10 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
         final bracket = entry.key;
         final bMatches = entry.value;
         final color = bracket == 'A'
-            ? Colors.amber.shade700
+            ? AppColors.adminOrange
             : bracket == 'B'
-                ? Colors.teal.shade700
-                : Colors.deepOrange.shade700;
+                ? AppColors.green
+                : AppColors.adminOrange;
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
@@ -710,8 +711,8 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         border: Border(
-            bottom: BorderSide(color: Colors.grey.shade200)),
-        color: isFinished ? Colors.green.shade50 : null,
+            bottom: BorderSide(color: AppColors.adminTextSecondary)),
+        color: isFinished ? AppColors.green.withOpacity(0.1) : null,
       ),
       child: Row(
         children: [
@@ -723,7 +724,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               children: [
                 if (num != null)
                   Text("Kamp $num",
-                      style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+                      style: TextStyle(fontSize: 9, color: AppColors.adminTextSecondary)),
                 Text(desc,
                     style: const TextStyle(
                         fontSize: 10, fontWeight: FontWeight.bold)),
@@ -739,7 +740,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: isPending ? Colors.grey : null,
+                      color: isPending ? AppColors.adminTextSecondary : null,
                       fontStyle: isPending ? FontStyle.italic : null,
                     ),
                     overflow: TextOverflow.ellipsis),
@@ -747,7 +748,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: isPending ? Colors.grey : null,
+                      color: isPending ? AppColors.adminTextSecondary : null,
                       fontStyle: isPending ? FontStyle.italic : null,
                     ),
                     overflow: TextOverflow.ellipsis),
@@ -765,7 +766,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                           fontSize: 11, fontWeight: FontWeight.bold)),
                 if (court != null && court != 'TBD')
                   Text(court,
-                      style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+                      style: TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
               ],
             ),
           // Score / status
@@ -775,12 +776,12 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                 style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
-                    color: Colors.green))
+                    color: AppColors.green))
           else
             Icon(
                 isPending ? Icons.hourglass_empty : Icons.circle_outlined,
                 size: 14,
-                color: isPending ? Colors.grey : Colors.blue),
+                color: isPending ? AppColors.adminTextSecondary : AppColors.adminOrange),
         ],
       ),
     );
@@ -799,7 +800,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             children: [
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.access_time, color: Colors.blue),
+                leading: const Icon(Icons.access_time, color: AppColors.adminOrange),
                 title: const Text("Starttid"),
                 subtitle:
                     Text(_startTime.format(ctx), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -829,7 +830,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
+                  color: AppColors.adminSurfaceElevated,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
@@ -854,7 +855,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               icon: const Icon(Icons.auto_fix_high),
               label: const Text("Generer"),
               style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue[900], foregroundColor: Colors.white),
+                   foregroundColor: AppColors.adminText),
               onPressed: () {
                 Navigator.pop(ctx);
                 _generateSchedule();

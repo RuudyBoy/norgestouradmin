@@ -8,6 +8,9 @@ import 'all_players_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'admin_login_page.dart';
 import 'player_claims_page.dart';
+import 'theme/app_theme.dart';
+import 'theme/app_colors.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -24,10 +27,13 @@ class AdminApp extends StatelessWidget {
     return MaterialApp(
       title: 'Spike Dunk Admin',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
+      theme: AppTheme.admin,
+      builder: (context, child) {
+        return Container(
+          color: AppColors.adminBg,
+          child: child,
+        );
+      },
       home: const AuthGate(),
     );
   }
@@ -67,7 +73,7 @@ class AuthGate extends StatelessWidget {
                     const SizedBox(height: 16),
                     const Text("Du har ikke admin-tilgang.", style: TextStyle(fontSize: 20)),
                     const SizedBox(height: 8),
-                    Text("UID: ${snapshot.data!.uid}", style: const TextStyle(color: Colors.grey)),
+                    Text("UID: ${snapshot.data!.uid}", style: const TextStyle(color: AppColors.adminTextSecondary)),
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: () => FirebaseAuth.instance.signOut(),
@@ -93,7 +99,7 @@ class AdminDashboard extends StatelessWidget {
       appBar: AppBar(
         title: const Text("Admin Dashboard"),
         backgroundColor: Colors.blue[800],
-        foregroundColor: Colors.white,
+        foregroundColor: AppColors.adminText,
       ),
       
       // --- SIDEMENY (DRAWER) ---
@@ -107,8 +113,8 @@ class AdminDashboard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text("Spike Dunk Admin", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  Text("Kontrollpanel", style: TextStyle(color: Colors.white70)),
+                  Text("Spike Dunk Admin", style: TextStyle(color: AppColors.adminText, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text("Kontrollpanel", style: TextStyle(color: AppColors.adminTextSecondary)),
                 ],
               ),
             ),
@@ -167,7 +173,7 @@ class AdminDashboard extends StatelessWidget {
         label: const Text("Ny Turnering"),
         icon: const Icon(Icons.add),
         backgroundColor: Colors.blue[800],
-        foregroundColor: Colors.white,
+        foregroundColor: AppColors.adminText,
       ),
 
       // --- LISTE OVER TURNERINGER ---
@@ -186,7 +192,7 @@ class AdminDashboard extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
-                  Icon(Icons.inbox, size: 64, color: Colors.grey),
+                  Icon(Icons.inbox, size: 64, color: AppColors.adminTextSecondary),
                   SizedBox(height: 16),
                   Text("Ingen turneringer enda. Trykk på knappen for å lage en!"),
                 ],
@@ -235,7 +241,7 @@ class AdminDashboard extends StatelessWidget {
                       const SizedBox(height: 4),
                      Row(
                         children: [
-                          const Icon(Icons.map, size: 16, color: Colors.grey),
+                          const Icon(Icons.map, size: 16, color: AppColors.adminTextSecondary),
                           const SizedBox(width: 4),
                           
                           // --- FIKSEN ER HER ---
@@ -251,7 +257,7 @@ class AdminDashboard extends StatelessWidget {
                           const SizedBox(width: 16),
                           
                           // Datoene holder vi som de er (de er som regel korte nok)
-                          const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
+                          const Icon(Icons.calendar_today, size: 16, color: AppColors.adminTextSecondary),
                           const SizedBox(width: 4),
                           Text("$start - $end"),
                         ],
@@ -294,7 +300,7 @@ class AdminDashboard extends StatelessWidget {
                                 ElevatedButton(
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.red,
-                                    foregroundColor: Colors.white,
+                                    foregroundColor: AppColors.adminText,
                                   ),
                                   onPressed: () => Navigator.pop(context, true),
                                   child: const Text("Slett"),
