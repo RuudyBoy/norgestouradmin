@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'match_control_page.dart';
-import 'simulator_logic.dart';
 import 'registrations_page.dart';
 import 'edit_tournament_page.dart';
 import 'tournament_schedule_page.dart';
@@ -27,15 +27,56 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   late TabController _tabController;
   String? _selectedCategoryId;
 
+  // Lytter på Firestore – oppdager når livescore-appen registrerer resultater
+  StreamSubscription<QuerySnapshot>? _finishedMatchListener;
+  Set<String> _knownFinishedIds = {};
+  bool _listenerReady = false;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() => setState(() {}));
+    _tabController.addListener(() {
+      setState(() {});
+      if (_tabController.index == 2 && !_tabController.indexIsChanging) {
+        _resolvePendingMatches();
+      }
+    });
+    _setupFinishedMatchListener();
+  }
+
+  /// Lytter på alle kamper i denne turneringen med status == 'finished'.
+  /// Når livescore-appen markerer en kamp som ferdig, trigges
+  /// _resolvePendingMatches() automatisk slik at neste runde og sluttspill
+  /// oppdateres med riktige lag umiddelbart.
+  void _setupFinishedMatchListener() {
+    _finishedMatchListener = FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('status', isEqualTo: 'finished')
+        .snapshots()
+        .listen((snapshot) {
+      final currentIds = snapshot.docs.map((d) => d.id).toSet();
+
+      if (!_listenerReady) {
+        // Første emisjon – bare noter eksisterende, ikke trigger resolve
+        _knownFinishedIds = currentIds;
+        _listenerReady = true;
+        return;
+      }
+
+      final newlyFinished = currentIds.difference(_knownFinishedIds);
+      if (newlyFinished.isNotEmpty) {
+        _knownFinishedIds = currentIds;
+        // En eller flere kamper ble nettopp avsluttet av livescore-appen
+        _resolvePendingMatches();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _finishedMatchListener?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -252,7 +293,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     ));
   }
 
-  // ─── Group stage logic ─────────────────────────────────────────────────────
+  // ─── HOVEDNØKKEL: Generer hele turneringen på én gang ─────────────────────
+  //
+  // Trykk én gang → grupper + runde 2 + sluttspill opprettes med én gang.
+  // Runde 2-kamper og sluttspillkamper starter som "pending" (lagene er
+  // ukjente ennå). Etter hvert som kamper spilles og resultater registreres
+  // kaller vi _resolvePendingMatches() som fyller inn lagnavnene automatisk.
 
   Future<void> _generateGroupStage() async {
     if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
@@ -265,23 +311,21 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
     final teams = snap.docs;
     if (teams.length < 4) {
-      _snack("Trenger minst 4 lag for å generere grupper (har ${teams.length}).", isError: true);
+      _snack("Trenger minst 4 lag for å generere (har ${teams.length}).", isError: true);
       return;
     }
 
-    // Check if groups already generated
-    final existingMatches = await FirebaseFirestore.instance
+    final existing = await FirebaseFirestore.instance
         .collection('matches')
         .where('tournament_id', isEqualTo: widget.tournamentId)
         .where('category_id', isEqualTo: _selectedCategoryId)
-        .where('stage', isEqualTo: 'group')
         .get();
-    if (existingMatches.docs.isNotEmpty) {
-      _snack("Grupper er allerede generert. Slett eksisterende kamper først.", isError: true);
+    if (existing.docs.isNotEmpty) {
+      _snack("Turnering er allerede satt opp. Nullstill via ⋮-menyen.", isError: true);
       return;
     }
 
-    // Sort by team_points descending → Seed 1 = høyest poeng
+    // Serpentine seeding etter rankingpoeng
     final sorted = List<DocumentSnapshot>.from(teams)
       ..sort((a, b) {
         final ap = (a.data() as Map)['team_points'] as num? ?? 0;
@@ -289,10 +333,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         return bp.compareTo(ap);
       });
 
-    // Dynamic number of groups: prefer groups of 4
     final numGroups = (sorted.length / 4).ceil();
+    if (numGroups < 2) {
+      _snack("Trenger minst 2 grupper (8 lag).", isError: true);
+      return;
+    }
 
-    // Serpentine seeding across N groups
     final groupLists = List.generate(numGroups, (_) => <DocumentSnapshot>[]);
     for (int i = 0; i < sorted.length; i++) {
       final row = i ~/ numGroups;
@@ -301,196 +347,481 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       groupLists[groupIdx].add(sorted[i]);
     }
 
-    final batch = FirebaseFirestore.instance.batch();
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    final g = List.generate(numGroups, (i) => String.fromCharCode(65 + i));
 
-    for (int g = 0; g < numGroups; g++) {
-      final groupName = String.fromCharCode(65 + g); // A, B, C, ...
-      final gTeams = groupLists[g];
+    // Pre-alloker doc-IDer for alle gruppekamper
+    // gruppeRefs[groupName] = { 'r1m1', 'r1m2', 'r2m3', 'r2m4' }
+    final Map<String, Map<String, DocumentReference>> gr = {};
+    for (final gn in g) {
+      gr[gn] = {
+        'r1m1': db.collection('matches').doc(),
+        'r1m2': db.collection('matches').doc(),
+        'r2m3': db.collection('matches').doc(),
+        'r2m4': db.collection('matches').doc(),
+      };
+    }
 
-      // Assign global seed and group to each team
-      for (int t = 0; t < gTeams.length; t++) {
-        final globalSeed = sorted.indexOf(gTeams[t]) + 1;
-        batch.update(gTeams[t].reference, {
-          'group': groupName,
-          'seed': globalSeed,
+    // ── Steg 1: Assign grupper og seeds ──────────────────────────────────────
+    for (int gi = 0; gi < numGroups; gi++) {
+      final gn = g[gi];
+      for (final t in groupLists[gi]) {
+        batch.update(t.reference, {
+          'group': gn,
+          'seed': sorted.indexOf(t) + 1,
           'group_placement': FieldValue.delete(),
         });
       }
-
-      // Modified Pool Play — Kamp 1: Seed 1 vs Seed 4 (høyest vs lavest)
-      if (gTeams.length >= 2) {
-        final m1Ref = FirebaseFirestore.instance.collection('matches').doc();
-        final seed1 = gTeams[0];
-        final seed4 = gTeams.length >= 4 ? gTeams[3] : gTeams[gTeams.length - 1];
-        batch.set(m1Ref, _buildGroupMatch(
-          groupName: groupName,
-          matchType: 'group_match_1',
-          teamA: seed1,
-          teamB: seed4,
-        ));
-      }
-
-      // Modified Pool Play — Kamp 2: Seed 2 vs Seed 3 (de to midterste)
-      if (gTeams.length >= 3) {
-        final m2Ref = FirebaseFirestore.instance.collection('matches').doc();
-        batch.set(m2Ref, _buildGroupMatch(
-          groupName: groupName,
-          matchType: 'group_match_2',
-          teamA: gTeams[1],
-          teamB: gTeams[2],
-        ));
-      }
     }
+
+    // ── Steg 2: Gruppekamper ─────────────────────────────────────────────────
+    for (int gi = 0; gi < numGroups; gi++) {
+      final gn = g[gi];
+      final gTeams = groupLists[gi];
+      final refs = gr[gn]!;
+
+      // Runde 1, Kamp 1: Seed 1 vs Seed 4
+      if (gTeams.length >= 2) {
+        final s4 = gTeams.length >= 4 ? gTeams[3] : gTeams.last;
+        batch.set(refs['r1m1']!, _buildGroupMatch(
+          groupName: gn, matchType: 'group_match_1',
+          teamA: gTeams[0], teamB: s4,
+        ));
+      }
+
+      // Runde 1, Kamp 2: Seed 2 vs Seed 3
+      if (gTeams.length >= 3) {
+        batch.set(refs['r1m2']!, _buildGroupMatch(
+          groupName: gn, matchType: 'group_match_2',
+          teamA: gTeams[1], teamB: gTeams[2],
+        ));
+      }
+
+      // Runde 2, Kamp 3: Vinnere (pending til R1 er ferdig)
+      batch.set(refs['r2m3']!, _pendingGroupMatch(
+        groupName: gn, matchType: 'group_match_3',
+        teamAFromMatchId: refs['r1m1']!.id, teamAFromSlot: 'winner',
+        teamAPlaceholder: 'Vinner K.${gn}1',
+        teamBFromMatchId: refs['r1m2']!.id, teamBFromSlot: 'winner',
+        teamBPlaceholder: 'Vinner K.${gn}2',
+      ));
+
+      // Runde 2, Kamp 4: Tapere (pending til R1 er ferdig)
+      batch.set(refs['r2m4']!, _pendingGroupMatch(
+        groupName: gn, matchType: 'group_match_4',
+        teamAFromMatchId: refs['r1m1']!.id, teamAFromSlot: 'loser',
+        teamAPlaceholder: 'Taper K.${gn}1',
+        teamBFromMatchId: refs['r1m2']!.id, teamBFromSlot: 'loser',
+        teamBPlaceholder: 'Taper K.${gn}2',
+      ));
+    }
+
+    // ── Steg 3: Sluttspillkamper (alle pending) ───────────────────────────────
+    _addPlayoffsToBatch(batch: batch, g: g, db: db);
 
     await batch.commit();
-    _snack("Grupper generert! $numGroups puljer med serpentine-seeding.");
+    _snack("$numGroups grupper + sluttspillkryssninger generert!");
   }
 
-  Future<void> _generateGroupRound2() async {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+  // Lager en pending gruppekamp med kilde-referanser
+  Map<String, dynamic> _pendingGroupMatch({
+    required String groupName,
+    required String matchType,
+    required String teamAFromMatchId,
+    required String teamAFromSlot,
+    required String teamAPlaceholder,
+    required String teamBFromMatchId,
+    required String teamBFromSlot,
+    required String teamBPlaceholder,
+  }) => {
+    'tournament_id': widget.tournamentId,
+    'category_id': _selectedCategoryId,
+    'stage': 'group',
+    'group': groupName,
+    'match_type': matchType,
+    'status': 'pending',
+    'court': 'TBD',
+    'timestamp': FieldValue.serverTimestamp(),
+    'home_score': 0, 'away_score': 0,
+    'home_sets': 0, 'away_sets': 0,
+    'current_set': 1, 'past_sets': [],
+    // Team A – placeholder
+    'team_a_name': teamAPlaceholder,
+    'team_a_id': 'placeholder',
+    'team_a_from_match_id': teamAFromMatchId,
+    'team_a_from_slot': teamAFromSlot,
+    // Team B – placeholder
+    'team_b_name': teamBPlaceholder,
+    'team_b_id': 'placeholder',
+    'team_b_from_match_id': teamBFromMatchId,
+    'team_b_from_slot': teamBFromSlot,
+  };
 
-    final finishedSnap = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
-        .where('stage', isEqualTo: 'group')
-        .where('status', isEqualTo: 'finished')
-        .get();
+  // Legger til alle sluttspillkamper i batchen med placeholder-referanser
+  void _addPlayoffsToBatch({
+    required WriteBatch batch,
+    required List<String> g,
+    required FirebaseFirestore db,
+  }) {
+    final numGroups = g.length;
 
-    final finished = finishedSnap.docs;
-    final groups = finished
-        .map((m) => (m.data() as Map)['group'] as String?)
-        .whereType<String>()
-        .toSet();
-
-    if (groups.isEmpty) {
-      _snack("Ingen ferdige kamper funnet. Spill Runde 1 først.", isError: true);
-      return;
+    // Hjelpere for placeholder-slots
+    Map<String, dynamic> groupSlot(String prefix, String group, int place) {
+      final labels = ['1. plass', '2. plass', '3. plass', '4. plass'];
+      return {
+        '${prefix}_name': '${labels[place - 1]} Pulje $group',
+        '${prefix}_id': 'placeholder',
+        '${prefix}_from_group': group,
+        '${prefix}_from_place': place,
+      };
     }
 
-    final batch = FirebaseFirestore.instance.batch();
-    int added = 0;
+    Map<String, dynamic> winnerSlot(String prefix, String fromMatchId) => {
+      '${prefix}_name': 'Vinner',
+      '${prefix}_id': 'placeholder',
+      '${prefix}_from_match_id': fromMatchId,
+      '${prefix}_from_slot': 'winner',
+    };
 
-    for (final groupName in groups) {
-      // Skip if round 2 already exists for this group
-      final r2Snap = await FirebaseFirestore.instance
-          .collection('matches')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .where('group', isEqualTo: groupName)
-          .where('stage', isEqualTo: 'group')
-          .get();
-      final hasR2 = r2Snap.docs.any((m) {
-        final t = (m.data() as Map)['match_type'] as String? ?? '';
-        return t == 'group_match_3' || t == 'group_match_4';
-      });
-      if (hasR2) continue;
+    Map<String, dynamic> mkPlayoff({
+      required String bracket, required String round, required int num,
+      required Map<String, dynamic> aSlot, required Map<String, dynamic> bSlot,
+      String? nextId, String? nextSlot,
+    }) => {
+      'tournament_id': widget.tournamentId,
+      'category_id': _selectedCategoryId,
+      'stage': 'playoff',
+      'bracket': bracket, 'round': round, 'match_number': num,
+      'status': 'pending', 'court': 'TBD',
+      'timestamp': FieldValue.serverTimestamp(),
+      'home_score': 0, 'away_score': 0,
+      'home_sets': 0, 'away_sets': 0,
+      'current_set': 1, 'past_sets': [],
+      if (nextId != null) 'next_match_id': nextId,
+      if (nextSlot != null) 'next_match_slot': nextSlot,
+      ...aSlot, ...bSlot,
+    };
 
-      final m1List = finished.where((m) =>
-          (m.data() as Map)['group'] == groupName &&
-          (m.data() as Map)['match_type'] == 'group_match_1').toList();
-      final m2List = finished.where((m) =>
-          (m.data() as Map)['group'] == groupName &&
-          (m.data() as Map)['match_type'] == 'group_match_2').toList();
+    if (numGroups == 4) {
+      // ─── 4-gruppe oppsett (16 lag) ─────────────────────────────────────────
+      // A-bracket: QF → SF → Finale
+      final r = <int, DocumentReference>{
+        for (final n in [101,102,103,104,105,106,107,201,202,203,301,302,303])
+          n: db.collection('matches').doc()
+      };
 
-      if (m1List.isEmpty || m2List.isEmpty) continue;
+      batch.set(r[101]!, mkPlayoff(bracket:'A', round:'qf', num:101,
+          nextId: r[105]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 1), bSlot: groupSlot('team_b', g[3], 2)));
 
-      final m1 = Map<String, dynamic>.from(m1List.first.data() as Map);
-      final m2 = Map<String, dynamic>.from(m2List.first.data() as Map);
+      batch.set(r[102]!, mkPlayoff(bracket:'A', round:'qf', num:102,
+          nextId: r[105]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 1), bSlot: groupSlot('team_b', g[0], 2)));
 
-      bool homeWins(Map d) => (d['home_score'] as int? ?? 0) > (d['away_score'] as int? ?? 0);
+      batch.set(r[103]!, mkPlayoff(bracket:'A', round:'qf', num:103,
+          nextId: r[106]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 1), bSlot: groupSlot('team_b', g[2], 2)));
 
-      final m1WinnerId = homeWins(m1) ? m1['team_a_id'] : m1['team_b_id'];
-      final m1LoserId  = homeWins(m1) ? m1['team_b_id'] : m1['team_a_id'];
-      final m2WinnerId = homeWins(m2) ? m2['team_a_id'] : m2['team_b_id'];
-      final m2LoserId  = homeWins(m2) ? m2['team_b_id'] : m2['team_a_id'];
+      batch.set(r[104]!, mkPlayoff(bracket:'A', round:'qf', num:104,
+          nextId: r[106]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 1), bSlot: groupSlot('team_b', g[1], 2)));
 
-      final winA  = await FirebaseFirestore.instance.collection('teams').doc(m1WinnerId as String).get();
-      final winB  = await FirebaseFirestore.instance.collection('teams').doc(m2WinnerId as String).get();
-      final loseA = await FirebaseFirestore.instance.collection('teams').doc(m1LoserId as String).get();
-      final loseB = await FirebaseFirestore.instance.collection('teams').doc(m2LoserId as String).get();
+      batch.set(r[105]!, mkPlayoff(bracket:'A', round:'sf', num:105,
+          nextId: r[107]!.id, nextSlot:'a',
+          aSlot: winnerSlot('team_a', r[101]!.id), bSlot: winnerSlot('team_b', r[102]!.id)));
 
-      if (!winA.exists || !winB.exists || !loseA.exists || !loseB.exists) continue;
+      batch.set(r[106]!, mkPlayoff(bracket:'A', round:'sf', num:106,
+          nextId: r[107]!.id, nextSlot:'b',
+          aSlot: winnerSlot('team_a', r[103]!.id), bSlot: winnerSlot('team_b', r[104]!.id)));
 
-      // Kamp 3 (Vinnerkampen): Winner M1 vs Winner M2 → 1./2. plass
-      batch.set(
-        FirebaseFirestore.instance.collection('matches').doc(),
-        _buildGroupMatch(groupName: groupName, matchType: 'group_match_3', teamA: winA, teamB: winB),
-      );
+      batch.set(r[107]!, mkPlayoff(bracket:'A', round:'final', num:107,
+          aSlot: winnerSlot('team_a', r[105]!.id), bSlot: winnerSlot('team_b', r[106]!.id)));
 
-      // Kamp 4 (Taperkampen): Loser M1 vs Loser M2 → 3./4. plass
-      batch.set(
-        FirebaseFirestore.instance.collection('matches').doc(),
-        _buildGroupMatch(groupName: groupName, matchType: 'group_match_4', teamA: loseA, teamB: loseB),
-      );
+      // B-bracket: SF → Finale (3. plass)
+      batch.set(r[201]!, mkPlayoff(bracket:'B', round:'sf', num:201,
+          nextId: r[203]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[3], 3)));
 
-      added += 2;
+      batch.set(r[202]!, mkPlayoff(bracket:'B', round:'sf', num:202,
+          nextId: r[203]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[2], 3)));
+
+      batch.set(r[203]!, mkPlayoff(bracket:'B', round:'final', num:203,
+          aSlot: winnerSlot('team_a', r[201]!.id), bSlot: winnerSlot('team_b', r[202]!.id)));
+
+      // C-bracket: SF → Finale (siste plass)
+      batch.set(r[301]!, mkPlayoff(bracket:'C', round:'sf', num:301,
+          nextId: r[303]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[3], 4)));
+
+      batch.set(r[302]!, mkPlayoff(bracket:'C', round:'sf', num:302,
+          nextId: r[303]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[2], 4)));
+
+      batch.set(r[303]!, mkPlayoff(bracket:'C', round:'final', num:303,
+          aSlot: winnerSlot('team_a', r[301]!.id), bSlot: winnerSlot('team_b', r[302]!.id)));
+
+    } else if (numGroups == 8) {
+      // ─── 8-gruppe oppsett (32 lag) ─────────────────────────────────────────
+      // A-bracket: R16 → QF → SF → Finale
+      final r = <int, DocumentReference>{
+        for (final n in [
+          101,102,103,104,105,106,107,108,109,110,111,
+          201,202,203,204,205,206,207,
+          301,302,303,304,305,306,307
+        ]) n: db.collection('matches').doc()
+      };
+
+      // R16 – 4 "wild card" kamper: høyere seedede 1ere vs 2ere
+      batch.set(r[101]!, mkPlayoff(bracket:'A', round:'r16', num:101,
+          nextId: r[106]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[4], 1), bSlot: groupSlot('team_b', g[3], 2)));
+
+      batch.set(r[102]!, mkPlayoff(bracket:'A', round:'r16', num:102,
+          nextId: r[105]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[7], 1), bSlot: groupSlot('team_b', g[0], 2)));
+
+      batch.set(r[103]!, mkPlayoff(bracket:'A', round:'r16', num:103,
+          nextId: r[108]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[5], 1), bSlot: groupSlot('team_b', g[2], 2)));
+
+      batch.set(r[104]!, mkPlayoff(bracket:'A', round:'r16', num:104,
+          nextId: r[107]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[6], 1), bSlot: groupSlot('team_b', g[1], 2)));
+
+      // QF
+      batch.set(r[105]!, mkPlayoff(bracket:'A', round:'qf', num:105,
+          nextId: r[109]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 1), bSlot: winnerSlot('team_b', r[102]!.id)));
+
+      batch.set(r[106]!, mkPlayoff(bracket:'A', round:'qf', num:106,
+          nextId: r[109]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 1), bSlot: winnerSlot('team_b', r[101]!.id)));
+
+      batch.set(r[107]!, mkPlayoff(bracket:'A', round:'qf', num:107,
+          nextId: r[110]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 1), bSlot: winnerSlot('team_b', r[104]!.id)));
+
+      batch.set(r[108]!, mkPlayoff(bracket:'A', round:'qf', num:108,
+          nextId: r[110]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 1), bSlot: winnerSlot('team_b', r[103]!.id)));
+
+      // SF
+      batch.set(r[109]!, mkPlayoff(bracket:'A', round:'sf', num:109,
+          nextId: r[111]!.id, nextSlot:'a',
+          aSlot: winnerSlot('team_a', r[105]!.id), bSlot: winnerSlot('team_b', r[106]!.id)));
+
+      batch.set(r[110]!, mkPlayoff(bracket:'A', round:'sf', num:110,
+          nextId: r[111]!.id, nextSlot:'b',
+          aSlot: winnerSlot('team_a', r[107]!.id), bSlot: winnerSlot('team_b', r[108]!.id)));
+
+      batch.set(r[111]!, mkPlayoff(bracket:'A', round:'final', num:111,
+          aSlot: winnerSlot('team_a', r[109]!.id), bSlot: winnerSlot('team_b', r[110]!.id)));
+
+      // B-bracket (3. plass)
+      batch.set(r[201]!, mkPlayoff(bracket:'B', round:'qf', num:201,
+          nextId: r[205]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[7], 3)));
+
+      batch.set(r[202]!, mkPlayoff(bracket:'B', round:'qf', num:202,
+          nextId: r[205]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 3), bSlot: groupSlot('team_b', g[4], 3)));
+
+      batch.set(r[203]!, mkPlayoff(bracket:'B', round:'qf', num:203,
+          nextId: r[206]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[6], 3)));
+
+      batch.set(r[204]!, mkPlayoff(bracket:'B', round:'qf', num:204,
+          nextId: r[206]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 3), bSlot: groupSlot('team_b', g[5], 3)));
+
+      batch.set(r[205]!, mkPlayoff(bracket:'B', round:'sf', num:205,
+          nextId: r[207]!.id, nextSlot:'a',
+          aSlot: winnerSlot('team_a', r[201]!.id), bSlot: winnerSlot('team_b', r[202]!.id)));
+
+      batch.set(r[206]!, mkPlayoff(bracket:'B', round:'sf', num:206,
+          nextId: r[207]!.id, nextSlot:'b',
+          aSlot: winnerSlot('team_a', r[203]!.id), bSlot: winnerSlot('team_b', r[204]!.id)));
+
+      batch.set(r[207]!, mkPlayoff(bracket:'B', round:'final', num:207,
+          aSlot: winnerSlot('team_a', r[205]!.id), bSlot: winnerSlot('team_b', r[206]!.id)));
+
+      // C-bracket (siste plass)
+      batch.set(r[301]!, mkPlayoff(bracket:'C', round:'qf', num:301,
+          nextId: r[305]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[7], 4)));
+
+      batch.set(r[302]!, mkPlayoff(bracket:'C', round:'qf', num:302,
+          nextId: r[305]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 4), bSlot: groupSlot('team_b', g[4], 4)));
+
+      batch.set(r[303]!, mkPlayoff(bracket:'C', round:'qf', num:303,
+          nextId: r[306]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[6], 4)));
+
+      batch.set(r[304]!, mkPlayoff(bracket:'C', round:'qf', num:304,
+          nextId: r[306]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 4), bSlot: groupSlot('team_b', g[5], 4)));
+
+      batch.set(r[305]!, mkPlayoff(bracket:'C', round:'sf', num:305,
+          nextId: r[307]!.id, nextSlot:'a',
+          aSlot: winnerSlot('team_a', r[301]!.id), bSlot: winnerSlot('team_b', r[302]!.id)));
+
+      batch.set(r[306]!, mkPlayoff(bracket:'C', round:'sf', num:306,
+          nextId: r[307]!.id, nextSlot:'b',
+          aSlot: winnerSlot('team_a', r[303]!.id), bSlot: winnerSlot('team_b', r[304]!.id)));
+
+      batch.set(r[307]!, mkPlayoff(bracket:'C', round:'final', num:307,
+          aSlot: winnerSlot('team_a', r[305]!.id), bSlot: winnerSlot('team_b', r[306]!.id)));
     }
-
-    if (added > 0) {
-      await batch.commit();
-      _snack("Runde 2 satt opp for $added kamper!");
-    } else {
-      _snack("Ingen nye grupper klare for Runde 2 ennå.");
-    }
+    // For andre gruppeantall: sluttspill opprettes ikke automatisk
   }
 
-  Future<void> _finalizePlacements() async {
+  // ─── Auto-resolve: Fyll inn riktige lag etter hvert som resultater kommer ─
+
+  Future<void> _resolvePendingMatches() async {
     if (_selectedCategoryId == null) return;
 
-    final finishedSnap = await FirebaseFirestore.instance
+    // Last alle kamper for denne turneringen + klassen
+    final allSnap = await FirebaseFirestore.instance
         .collection('matches')
         .where('tournament_id', isEqualTo: widget.tournamentId)
         .where('category_id', isEqualTo: _selectedCategoryId)
-        .where('stage', isEqualTo: 'group')
-        .where('status', isEqualTo: 'finished')
         .get();
 
-    final batch = FirebaseFirestore.instance.batch();
-    int updated = 0;
+    final allMatches = allSnap.docs;
+    if (allMatches.isEmpty) return;
 
-    for (final m in finishedSnap.docs) {
-      final d = Map<String, dynamic>.from(m.data() as Map);
+    final matchById = <String, Map<String, dynamic>>{
+      for (final m in allMatches) m.id: m.data() as Map<String, dynamic>
+    };
+
+    // ── Del 1: Beregn og oppdater lag-plasseringer fra ferdige R2-kamper ────
+    final teamPlacements = <String, int>{}; // teamId → placement
+    for (final m in allMatches) {
+      final d = matchById[m.id]!;
+      if (d['stage'] != 'group' || d['status'] != 'finished') continue;
       final mType = d['match_type'] as String? ?? '';
       if (mType != 'group_match_3' && mType != 'group_match_4') continue;
 
       final homeWins = (d['home_score'] as int? ?? 0) > (d['away_score'] as int? ?? 0);
-      final winnerId = homeWins ? d['team_a_id'] : d['team_b_id'];
-      final loserId  = homeWins ? d['team_b_id'] : d['team_a_id'];
-
+      final winnerId = (homeWins ? d['team_a_id'] : d['team_b_id']) as String?;
+      final loserId  = (homeWins ? d['team_b_id'] : d['team_a_id']) as String?;
       final winPlace  = mType == 'group_match_3' ? 1 : 3;
       final losePlace = mType == 'group_match_3' ? 2 : 4;
 
-      batch.update(FirebaseFirestore.instance.collection('teams').doc(winnerId as String), {'group_placement': winPlace});
-      batch.update(FirebaseFirestore.instance.collection('teams').doc(loserId  as String), {'group_placement': losePlace});
-      updated += 2;
+      if (winnerId != null && winnerId != 'placeholder') teamPlacements[winnerId] = winPlace;
+      if (loserId  != null && loserId  != 'placeholder') teamPlacements[loserId]  = losePlace;
     }
 
-    if (updated > 0) {
-      await batch.commit();
-      _snack("Plasseringer beregnet for $updated lag.");
-    } else {
-      _snack("Ingen ferdige Runde 2-kamper funnet.");
+    if (teamPlacements.isNotEmpty) {
+      final tBatch = FirebaseFirestore.instance.batch();
+      for (final e in teamPlacements.entries) {
+        tBatch.update(
+          FirebaseFirestore.instance.collection('teams').doc(e.key),
+          {'group_placement': e.value},
+        );
+      }
+      await tBatch.commit();
     }
-  }
 
-  Future<void> _simulateAll() async {
-    final snackCtrl = ScaffoldMessenger.of(context);
-    snackCtrl.showSnackBar(const SnackBar(content: Text("Simulerer alle oppsatte kamper..."), duration: Duration(minutes: 2)));
-    await MatchSimulator.simulateScheduledMatches(widget.tournamentId, (_) {});
-    snackCtrl.hideCurrentSnackBar();
-    snackCtrl.showSnackBar(const SnackBar(content: Text("Simulering fullført!")));
+    // Last oppdaterte lagdata for (gruppe, plass) → lagdata
+    final teamsSnap = await FirebaseFirestore.instance
+        .collection('teams')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: _selectedCategoryId)
+        .get();
+
+    final teamByGroupPlace = <String, Map<String, dynamic>>{};
+    for (final t in teamsSnap.docs) {
+      final d = t.data() as Map<String, dynamic>;
+      final group = d['group'] as String?;
+      final place = d['group_placement'] as int?;
+      if (group != null && place != null) {
+        teamByGroupPlace['${group}_$place'] = {'_id': t.id, ...d};
+      }
+    }
+
+    // ── Del 2: Resolve pending kamper ────────────────────────────────────────
+    final mBatch = FirebaseFirestore.instance.batch();
+    int updates = 0;
+
+    for (final matchDoc in allMatches) {
+      final d = matchById[matchDoc.id]!;
+      // Hopp over kamper som allerede er startet eller ferdig
+      if (d['status'] == 'finished' || d['status'] == 'live' || d['status'] == 'scheduled') continue;
+
+      final upd = <String, dynamic>{};
+
+      // Resolver team_a og team_b
+      for (final prefix in ['team_a', 'team_b']) {
+        final currentId = d['${prefix}_id'] as String? ?? '';
+        if (currentId != 'placeholder') continue; // Allerede resolved
+
+        // Kilde: vinner/taper av en annen kamp
+        final fromMatchId = d['${prefix}_from_match_id'] as String?;
+        final fromSlot    = d['${prefix}_from_slot'] as String?;
+        if (fromMatchId != null && fromSlot != null) {
+          final src = matchById[fromMatchId];
+          if (src != null && src['status'] == 'finished') {
+            final homeWins = (src['home_score'] as int? ?? 0) > (src['away_score'] as int? ?? 0);
+            final isWinner = fromSlot == 'winner';
+            final useA = isWinner ? homeWins : !homeWins;
+            final sp = useA ? 'team_a' : 'team_b';
+
+            upd['${prefix}_name']   = src['${sp}_name']   ?? '';
+            upd['${prefix}_id']     = src['${sp}_id']     ?? '';
+            upd['${prefix}_p1_name'] = src['${sp}_p1_name'] ?? '';
+            upd['${prefix}_p1_id']   = src['${sp}_p1_id']   ?? '';
+            upd['${prefix}_p2_name'] = src['${sp}_p2_name'] ?? '';
+            upd['${prefix}_p2_id']   = src['${sp}_p2_id']   ?? '';
+          }
+          continue;
+        }
+
+        // Kilde: gruppeplass (f.eks. "1. plass Pulje A")
+        final fromGroup = d['${prefix}_from_group'] as String?;
+        final fromPlace = d['${prefix}_from_place'] as int?;
+        if (fromGroup != null && fromPlace != null) {
+          final team = teamByGroupPlace['${fromGroup}_$fromPlace'];
+          if (team != null) {
+            upd['${prefix}_name']   = team['team_name']    ?? '';
+            upd['${prefix}_id']     = team['_id']          ?? '';
+            upd['${prefix}_p1_name'] = team['player1_name'] ?? '';
+            upd['${prefix}_p1_id']   = team['player1_id']   ?? '';
+            upd['${prefix}_p2_name'] = team['player2_name'] ?? '';
+            upd['${prefix}_p2_id']   = team['player2_id']   ?? '';
+          }
+        }
+      }
+
+      if (upd.isNotEmpty) {
+        // Sjekk om begge lag er resolved nå → sett til 'scheduled'
+        final aId = (upd['team_a_id'] ?? d['team_a_id']) as String? ?? '';
+        final bId = (upd['team_b_id'] ?? d['team_b_id']) as String? ?? '';
+        if (aId.isNotEmpty && aId != 'placeholder' && bId.isNotEmpty && bId != 'placeholder') {
+          upd['status'] = 'scheduled';
+        }
+        mBatch.update(matchDoc.reference, upd);
+        updates++;
+      }
+    }
+
+    if (updates > 0) await mBatch.commit();
   }
 
   // ─── Reset ────────────────────────────────────────────────────────────────
 
-  Future<void> _resetGroupStage() async {
+  Future<void> _resetTournament() async {
     if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Nullstill gruppespill"),
+        title: const Text("Nullstill hele turneringen"),
         content: const Text(
-            "Dette sletter ALLE gruppekamper og tilbakestiller seeding og plasseringer for valgt klasse.\n\nLagene beholdes.\n\nEr du sikker?"),
+            "Dette sletter ALLE kamper (gruppe + sluttspill) og tilbakestiller grupper og plasseringer.\n\nLagene beholdes.\n\nEr du sikker?"),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
           ElevatedButton(
@@ -503,11 +834,11 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
     if (ok != true) return;
 
+    // Slett ALLE kamper for denne klassen
     final matchSnap = await FirebaseFirestore.instance
         .collection('matches')
         .where('tournament_id', isEqualTo: widget.tournamentId)
         .where('category_id', isEqualTo: _selectedCategoryId)
-        .where('stage', isEqualTo: 'group')
         .get();
 
     final teamSnap = await FirebaseFirestore.instance
@@ -526,39 +857,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       });
     }
     await batch.commit();
-    _snack("Gruppespill nullstilt. Lag beholdt.");
-  }
-
-  Future<void> _resetPlayoffs() async {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Nullstill sluttspill"),
-        content: const Text(
-            "Dette sletter ALLE sluttspillkamper for valgt klasse.\n\nGruppespillresultater og plasseringer beholdes.\n\nEr du sikker?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Nullstill"),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    final snap = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
-        .where('stage', isEqualTo: 'playoff')
-        .get();
-    final batch = FirebaseFirestore.instance.batch();
-    for (final m in snap.docs) batch.delete(m.reference);
-    await batch.commit();
-    _snack("Sluttspill nullstilt.");
+    _snack("Turnering nullstilt. Lag beholdt.");
   }
 
   // ─── Match editing ─────────────────────────────────────────────────────────
@@ -588,7 +887,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     child: TextField(
                       controller: courtCtrl,
                       decoration: const InputDecoration(
-                          labelText: "Bane", border: OutlineInputBorder(), prefixIcon: Icon(Icons.grid_view)),
+                          labelText: "Bane", border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.grid_view)),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -596,7 +896,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     child: TextField(
                       controller: timeCtrl,
                       decoration: const InputDecoration(
-                          labelText: "Tid (HH:MM)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.access_time)),
+                          labelText: "Tid (HH:MM)", border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.access_time)),
                     ),
                   ),
                 ],
@@ -604,9 +905,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               if (isFinished) ...[
                 const SizedBox(height: 12),
                 const Divider(),
-                const SizedBox(height: 4),
-                const Text("Overstyr sett-resultat",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const Text("Overstyr resultat", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -615,23 +914,17 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                         controller: homeScoreCtrl,
                         keyboardType: TextInputType.number,
                         decoration: InputDecoration(
-                          labelText: d['team_a_name'] ?? 'Lag A',
-                          border: const OutlineInputBorder(),
-                        ),
+                            labelText: d['team_a_name'] ?? 'Lag A', border: const OutlineInputBorder()),
                       ),
                     ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Text("–", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    ),
+                    const Padding(padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Text("–", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                     Expanded(
                       child: TextField(
                         controller: awayScoreCtrl,
                         keyboardType: TextInputType.number,
                         decoration: InputDecoration(
-                          labelText: d['team_b_name'] ?? 'Lag B',
-                          border: const OutlineInputBorder(),
-                        ),
+                            labelText: d['team_b_name'] ?? 'Lag B', border: const OutlineInputBorder()),
                       ),
                     ),
                   ],
@@ -639,9 +932,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               ],
               const SizedBox(height: 12),
               const Divider(),
-              const SizedBox(height: 4),
-              const Text("Bytt lag",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const Text("Bytt lag", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 icon: const Icon(Icons.swap_horiz),
@@ -649,6 +940,32 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 onPressed: () async {
                   Navigator.pop(ctx);
                   await _swapTeamsInMatch(matchDoc);
+                },
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.flag, color: AppColors.adminOrange),
+                label: const Text("Walkover – Lag A vinner",
+                    style: TextStyle(color: AppColors.adminOrange)),
+                onPressed: () async {
+                  await matchDoc.reference.update({
+                    'status': 'finished', 'home_score': 1, 'away_score': 0, 'walkover': true,
+                  });
+                  await _resolvePendingMatches();
+                  if (ctx.mounted) { Navigator.pop(ctx); _snack("Walkover – Lag A vinner."); }
+                },
+              ),
+              const SizedBox(height: 4),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.flag, color: AppColors.adminOrange),
+                label: const Text("Walkover – Lag B vinner",
+                    style: TextStyle(color: AppColors.adminOrange)),
+                onPressed: () async {
+                  await matchDoc.reference.update({
+                    'status': 'finished', 'home_score': 0, 'away_score': 1, 'walkover': true,
+                  });
+                  await _resolvePendingMatches();
+                  if (ctx.mounted) { Navigator.pop(ctx); _snack("Walkover – Lag B vinner."); }
                 },
               ),
             ],
@@ -663,16 +980,13 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 'match_time': timeCtrl.text.trim(),
               };
               if (isFinished) {
-                final hs = int.tryParse(homeScoreCtrl.text) ?? (d['home_score'] as int? ?? 0);
-                final as_ = int.tryParse(awayScoreCtrl.text) ?? (d['away_score'] as int? ?? 0);
-                updates['home_score'] = hs;
-                updates['away_score'] = as_;
+                updates['home_score'] = int.tryParse(homeScoreCtrl.text) ?? (d['home_score'] as int? ?? 0);
+                updates['away_score'] = int.tryParse(awayScoreCtrl.text) ?? (d['away_score'] as int? ?? 0);
               }
               await matchDoc.reference.update(updates);
-              if (ctx.mounted) {
-                Navigator.pop(ctx);
-                _snack("Kamp oppdatert.");
-              }
+              // Resolve downstream kamper hvis resultat er endret
+              if (isFinished) await _resolvePendingMatches();
+              if (ctx.mounted) { Navigator.pop(ctx); _snack("Kamp oppdatert."); }
             },
             child: const Text("Lagre"),
           ),
@@ -684,18 +998,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   Future<void> _swapTeamsInMatch(DocumentSnapshot matchDoc) async {
     final d = matchDoc.data() as Map<String, dynamic>;
     await matchDoc.reference.update({
-      'team_a_name': d['team_b_name'],
-      'team_a_id': d['team_b_id'],
-      'team_a_p1_name': d['team_b_p1_name'],
-      'team_a_p1_id': d['team_b_p1_id'],
-      'team_a_p2_name': d['team_b_p2_name'],
-      'team_a_p2_id': d['team_b_p2_id'],
-      'team_b_name': d['team_a_name'],
-      'team_b_id': d['team_a_id'],
-      'team_b_p1_name': d['team_a_p1_name'],
-      'team_b_p1_id': d['team_a_p1_id'],
-      'team_b_p2_name': d['team_a_p2_name'],
-      'team_b_p2_id': d['team_a_p2_id'],
+      'team_a_name': d['team_b_name'], 'team_a_id': d['team_b_id'],
+      'team_a_p1_name': d['team_b_p1_name'], 'team_a_p1_id': d['team_b_p1_id'],
+      'team_a_p2_name': d['team_b_p2_name'], 'team_a_p2_id': d['team_b_p2_id'],
+      'team_b_name': d['team_a_name'], 'team_b_id': d['team_a_id'],
+      'team_b_p1_name': d['team_a_p1_name'], 'team_b_p1_id': d['team_a_p1_id'],
+      'team_b_p2_name': d['team_a_p2_name'], 'team_b_p2_id': d['team_a_p2_id'],
     });
     _snack("Lag byttet.");
   }
@@ -709,7 +1017,6 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     String? currentGroup = d['group'] as String?;
     String? selectedGroup = currentGroup;
 
-    // Fetch all groups for this category
     final groupsSnap = await FirebaseFirestore.instance
         .collection('teams')
         .where('tournament_id', isEqualTo: widget.tournamentId)
@@ -734,23 +1041,20 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           children: [
             TextField(
               controller: nameCtrl,
-              decoration: const InputDecoration(
-                  labelText: "Lagnavn", border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: "Lagnavn", border: OutlineInputBorder()),
             ),
             const SizedBox(height: 12),
             TextField(
               keyboardType: TextInputType.number,
               controller: TextEditingController(text: seed?.toString() ?? ''),
-              decoration: const InputDecoration(
-                  labelText: "Seed-nummer", border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: "Seed-nummer", border: OutlineInputBorder()),
               onChanged: (v) => seed = int.tryParse(v),
             ),
             if (allGroups.isNotEmpty) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 value: selectedGroup != null && allGroups.contains(selectedGroup) ? selectedGroup : null,
-                decoration: const InputDecoration(
-                    labelText: "Flytt til pulje", border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: "Flytt til pulje", border: OutlineInputBorder()),
                 items: [
                   const DropdownMenuItem(value: null, child: Text("Ingen pulje")),
                   ...allGroups.map((g) => DropdownMenuItem(value: g, child: Text("Pulje $g"))),
@@ -769,17 +1073,10 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 if (seed != null) 'seed': seed,
               };
               if (selectedGroup != currentGroup) {
-                if (selectedGroup == null) {
-                  updates['group'] = FieldValue.delete();
-                } else {
-                  updates['group'] = selectedGroup;
-                }
+                updates['group'] = selectedGroup == null ? FieldValue.delete() : selectedGroup;
               }
               await teamDoc.reference.update(updates);
-              if (ctx.mounted) {
-                Navigator.pop(ctx);
-                _snack("Lag oppdatert.");
-              }
+              if (ctx.mounted) { Navigator.pop(ctx); _snack("Lag oppdatert."); }
             },
             child: const Text("Lagre"),
           ),
@@ -788,226 +1085,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  // ─── Playoff logic ─────────────────────────────────────────────────────────
-
-  Future<void> _generatePlayoffs() async {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
-
-    final teamsSnap = await FirebaseFirestore.instance
-        .collection('teams')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
-        .get();
-    final allTeams = teamsSnap.docs;
-
-    if (allTeams.any((t) => (t.data() as Map)['group_placement'] == null)) {
-      _snack("Alle lag må ha plasseringer. Kjør \"Beregn Plasseringer\" under Grupper-fanen.", isError: true);
-      return;
-    }
-
-    final groupNames = allTeams
-        .map((t) => (t.data() as Map)['group'] as String?)
-        .whereType<String>()
-        .toSet()
-        .toList()
-      ..sort();
-    final numGroups = groupNames.length;
-
-    if (numGroups != 4 && numGroups != 8) {
-      _snack("Støtter 4 eller 8 grupper (har $numGroups grupper).", isError: true);
-      return;
-    }
-
-    final existing = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
-        .where('stage', isEqualTo: 'playoff')
-        .get();
-    if (existing.docs.isNotEmpty) {
-      _snack("Sluttspill er allerede generert.", isError: true);
-      return;
-    }
-
-    final db = FirebaseFirestore.instance;
-    final List<int> nums = numGroups == 4
-        ? [101,102,103,104,105,106,107,201,202,203,301,302,303]
-        : [101,102,103,104,105,106,107,108,109,110,111,201,202,203,204,205,206,207,301,302,303,304,305,306,307];
-    final refs = <int, DocumentReference>{for (final n in nums) n: db.collection('matches').doc()};
-
-    // ── Slot helpers ─────────────────────────────────────────────────────────
-
-    DocumentSnapshot? teamAt(String group, int placement) {
-      try {
-        return allTeams.firstWhere((t) {
-          final d = t.data() as Map;
-          return d['group'] == group && d['group_placement'] == placement;
-        });
-      } catch (_) { return null; }
-    }
-
-    Map<String, dynamic> realSlot(String px, DocumentSnapshot team) {
-      final d = team.data() as Map<String, dynamic>;
-      return {
-        '${px}_name': d['team_name'] ?? '',
-        '${px}_id': team.id,
-        '${px}_p1_name': d['player1_name'] ?? '',
-        '${px}_p1_id': d['player1_id'] ?? '',
-        '${px}_p2_name': d['player2_name'] ?? '',
-        '${px}_p2_id': d['player2_id'] ?? '',
-      };
-    }
-
-    Map<String, dynamic> phSlot(String px, String ph) =>
-        {'${px}_name': ph, '${px}_id': 'placeholder'};
-
-    Map<String, dynamic> groupSlot(String px, String group, int place) {
-      final team = teamAt(group, place);
-      final placeStr = place == 1 ? '1st' : place == 2 ? '2nd' : place == 3 ? '3rd' : '4th';
-      return team != null ? realSlot(px, team) : phSlot(px, '${placeStr}_Place_Pool_$group');
-    }
-
-    Map<String, dynamic> winSlot(String px, int fromNum) => {
-      '${px}_name': 'Vinner Kamp $fromNum',
-      '${px}_id': 'placeholder',
-      '${px}_from_match': refs[fromNum]!.id,
-    };
-
-    Map<String, dynamic> mkMatch({
-      required String bracket,
-      required String round,
-      required int num,
-      required Map<String, dynamic> aSlot,
-      required Map<String, dynamic> bSlot,
-      int? nextNum,
-      String? nextSlot,
-    }) {
-      final isPending = aSlot['team_a_id'] == 'placeholder' || bSlot['team_b_id'] == 'placeholder';
-      return {
-        'tournament_id': widget.tournamentId,
-        'category_id': _selectedCategoryId,
-        'stage': 'playoff',
-        'bracket': bracket,
-        'round': round,
-        'match_number': num,
-        'status': isPending ? 'pending' : 'scheduled',
-        'court': 'TBD',
-        'timestamp': FieldValue.serverTimestamp(),
-        'home_score': 0, 'away_score': 0,
-        'home_sets': 0, 'away_sets': 0,
-        'current_set': 1, 'past_sets': [],
-        if (nextNum != null) 'next_match_id': refs[nextNum]!.id,
-        if (nextSlot != null) 'next_match_slot': nextSlot,
-        ...aSlot,
-        ...bSlot,
-      };
-    }
-
-    // ── Build bracket ────────────────────────────────────────────────────────
-
-    final batch = db.batch();
-    final g = groupNames;
-
-    if (numGroups == 4) {
-      // A-bracket: QF (seed1 vs seed8 format) → SF → Finale
-      // Half 1: seed1(g[0]) and seed4(g[3]) → 1stA/2ndD path
-      // Half 2: seed2(g[1]) and seed3(g[2]) → 1stB/2ndC path
-      batch.set(refs[101]!, mkMatch(bracket:'A', round:'qf', num:101, nextNum:105, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 1), bSlot: groupSlot('team_b', g[3], 2)));
-      batch.set(refs[102]!, mkMatch(bracket:'A', round:'qf', num:102, nextNum:105, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 1), bSlot: groupSlot('team_b', g[0], 2)));
-      batch.set(refs[103]!, mkMatch(bracket:'A', round:'qf', num:103, nextNum:106, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 1), bSlot: groupSlot('team_b', g[2], 2)));
-      batch.set(refs[104]!, mkMatch(bracket:'A', round:'qf', num:104, nextNum:106, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 1), bSlot: groupSlot('team_b', g[1], 2)));
-      batch.set(refs[105]!, mkMatch(bracket:'A', round:'sf', num:105, nextNum:107, nextSlot:'a',
-          aSlot: winSlot('team_a', 101), bSlot: winSlot('team_b', 102)));
-      batch.set(refs[106]!, mkMatch(bracket:'A', round:'sf', num:106, nextNum:107, nextSlot:'b',
-          aSlot: winSlot('team_a', 103), bSlot: winSlot('team_b', 104)));
-      batch.set(refs[107]!, mkMatch(bracket:'A', round:'final', num:107,
-          aSlot: winSlot('team_a', 105), bSlot: winSlot('team_b', 106)));
-
-      // B-bracket: SF → Finale (4 lag, 3. plasserte)
-      batch.set(refs[201]!, mkMatch(bracket:'B', round:'sf', num:201, nextNum:203, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[3], 3)));
-      batch.set(refs[202]!, mkMatch(bracket:'B', round:'sf', num:202, nextNum:203, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[2], 3)));
-      batch.set(refs[203]!, mkMatch(bracket:'B', round:'final', num:203,
-          aSlot: winSlot('team_a', 201), bSlot: winSlot('team_b', 202)));
-
-      // C-bracket: SF → Finale (4 lag, 4. plasserte)
-      batch.set(refs[301]!, mkMatch(bracket:'C', round:'sf', num:301, nextNum:303, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[3], 4)));
-      batch.set(refs[302]!, mkMatch(bracket:'C', round:'sf', num:302, nextNum:303, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[2], 4)));
-      batch.set(refs[303]!, mkMatch(bracket:'C', round:'final', num:303,
-          aSlot: winSlot('team_a', 301), bSlot: winSlot('team_b', 302)));
-
-    } else {
-      // 8 grupper — A-bracket med 4 Byes (g[0]–g[3] = A–D, g[4]–g[7] = E–H)
-      // R16: nedre halvdel spiller seg opp til KF
-      batch.set(refs[101]!, mkMatch(bracket:'A', round:'r16', num:101, nextNum:106, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[4], 1), bSlot: groupSlot('team_b', g[3], 2)));
-      batch.set(refs[102]!, mkMatch(bracket:'A', round:'r16', num:102, nextNum:105, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[7], 1), bSlot: groupSlot('team_b', g[0], 2)));
-      batch.set(refs[103]!, mkMatch(bracket:'A', round:'r16', num:103, nextNum:108, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[5], 1), bSlot: groupSlot('team_b', g[2], 2)));
-      batch.set(refs[104]!, mkMatch(bracket:'A', round:'r16', num:104, nextNum:107, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[6], 1), bSlot: groupSlot('team_b', g[1], 2)));
-      // KF: 1stA og 1stB på HVER SIN HALVDEL (møtes aldri før Finale)
-      batch.set(refs[105]!, mkMatch(bracket:'A', round:'qf', num:105, nextNum:109, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 1), bSlot: winSlot('team_b', 102)));
-      batch.set(refs[106]!, mkMatch(bracket:'A', round:'qf', num:106, nextNum:109, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 1), bSlot: winSlot('team_b', 101)));
-      batch.set(refs[107]!, mkMatch(bracket:'A', round:'qf', num:107, nextNum:110, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 1), bSlot: winSlot('team_b', 104)));
-      batch.set(refs[108]!, mkMatch(bracket:'A', round:'qf', num:108, nextNum:110, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 1), bSlot: winSlot('team_b', 103)));
-      batch.set(refs[109]!, mkMatch(bracket:'A', round:'sf', num:109, nextNum:111, nextSlot:'a',
-          aSlot: winSlot('team_a', 105), bSlot: winSlot('team_b', 106)));
-      batch.set(refs[110]!, mkMatch(bracket:'A', round:'sf', num:110, nextNum:111, nextSlot:'b',
-          aSlot: winSlot('team_a', 107), bSlot: winSlot('team_b', 108)));
-      batch.set(refs[111]!, mkMatch(bracket:'A', round:'final', num:111,
-          aSlot: winSlot('team_a', 109), bSlot: winSlot('team_b', 110)));
-
-      // B-bracket: KF → SF → Finale (8 lag, 3. plasserte)
-      batch.set(refs[201]!, mkMatch(bracket:'B', round:'qf', num:201, nextNum:205, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[7], 3)));
-      batch.set(refs[202]!, mkMatch(bracket:'B', round:'qf', num:202, nextNum:205, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 3), bSlot: groupSlot('team_b', g[4], 3)));
-      batch.set(refs[203]!, mkMatch(bracket:'B', round:'qf', num:203, nextNum:206, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[6], 3)));
-      batch.set(refs[204]!, mkMatch(bracket:'B', round:'qf', num:204, nextNum:206, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 3), bSlot: groupSlot('team_b', g[5], 3)));
-      batch.set(refs[205]!, mkMatch(bracket:'B', round:'sf', num:205, nextNum:207, nextSlot:'a',
-          aSlot: winSlot('team_a', 201), bSlot: winSlot('team_b', 202)));
-      batch.set(refs[206]!, mkMatch(bracket:'B', round:'sf', num:206, nextNum:207, nextSlot:'b',
-          aSlot: winSlot('team_a', 203), bSlot: winSlot('team_b', 204)));
-      batch.set(refs[207]!, mkMatch(bracket:'B', round:'final', num:207,
-          aSlot: winSlot('team_a', 205), bSlot: winSlot('team_b', 206)));
-
-      // C-bracket: KF → SF → Finale (8 lag, 4. plasserte)
-      batch.set(refs[301]!, mkMatch(bracket:'C', round:'qf', num:301, nextNum:305, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[7], 4)));
-      batch.set(refs[302]!, mkMatch(bracket:'C', round:'qf', num:302, nextNum:305, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 4), bSlot: groupSlot('team_b', g[4], 4)));
-      batch.set(refs[303]!, mkMatch(bracket:'C', round:'qf', num:303, nextNum:306, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[6], 4)));
-      batch.set(refs[304]!, mkMatch(bracket:'C', round:'qf', num:304, nextNum:306, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 4), bSlot: groupSlot('team_b', g[5], 4)));
-      batch.set(refs[305]!, mkMatch(bracket:'C', round:'sf', num:305, nextNum:307, nextSlot:'a',
-          aSlot: winSlot('team_a', 301), bSlot: winSlot('team_b', 302)));
-      batch.set(refs[306]!, mkMatch(bracket:'C', round:'sf', num:306, nextNum:307, nextSlot:'b',
-          aSlot: winSlot('team_a', 303), bSlot: winSlot('team_b', 304)));
-      batch.set(refs[307]!, mkMatch(bracket:'C', round:'final', num:307,
-          aSlot: winSlot('team_a', 305), bSlot: winSlot('team_b', 306)));
-    }
-
-    await batch.commit();
-    _snack("A/B/C-sluttspill generert ($numGroups grupper)!");
-  }
-
-  // ─── Sluttspill-fanen ────────────────────────────────────────────────────
+  // ─── Sluttspill – visual bracket ──────────────────────────────────────────
 
   Widget _buildPlayoffsTab() {
     if (_selectedCategoryId == null) {
@@ -1024,7 +1102,29 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final matches = snap.data!.docs;
 
-        // Find which brackets actually have matches
+        if (matches.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.emoji_events, size: 64, color: AppColors.adminOrange),
+                  const SizedBox(height: 16),
+                  const Text("Sluttspill ikke generert ennå.",
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Gå til Grupper-fanen og trykk\n\"Generer Grupper\" for å sette opp hele turneringen.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.adminTextSecondary, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
         final brackets = matches
             .map((m) => (m.data() as Map)['bracket'] as String?)
             .whereType<String>()
@@ -1032,82 +1132,57 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             .toList()
           ..sort();
 
-        List<DocumentSnapshot> forBracket(String b) => (matches
-            .where((m) => (m.data() as Map)['bracket'] == b)
-            .toList()
-          ..sort((a, x) => ((a.data() as Map)['match_number'] as int? ?? 0)
-              .compareTo((x.data() as Map)['match_number'] as int? ?? 0)));
-
-        final bracketColors = {
-          'A': Colors.amber[800]!,
-          'B': AppColors.adminTextSecondary!,
-          'C': AppColors.adminTextSecondary,
-        };
-        final bracketIcons = {
-          'A': Icons.emoji_events,
-          'B': Icons.workspace_premium,
-          'C': Icons.military_tech,
-        };
-
         return DefaultTabController(
           length: brackets.isEmpty ? 1 : brackets.length,
           child: Column(
             children: [
-              // Generate button
+              // Sync-knapp øverst
               Container(
-                color: AppColors.adminTextSecondary,
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.emoji_events, size: 16),
-                  label: const Text("Generer A/B/C Sluttspill"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFF5A623),
-                    
-                    minimumSize: const Size(double.infinity, 40),
-                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                  ),
-                  onPressed: _generatePlayoffs,
+                color: AppColors.adminSurface,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: [
+                    const Text("Oppdateres automatisk etter hvert som kamper spilles",
+                        style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary)),
+                    const Spacer(),
+                    TextButton.icon(
+                      icon: const Icon(Icons.sync, size: 15, color: AppColors.adminOrange),
+                      label: const Text("Sync", style: TextStyle(color: AppColors.adminOrange, fontSize: 12)),
+                      onPressed: () async {
+                        await _resolvePendingMatches();
+                        _snack("Bracket synkronisert.");
+                      },
+                    ),
+                  ],
                 ),
               ),
-
-              if (matches.isEmpty)
-                const Expanded(
-                  child: Center(
-                    child: Text(
-                      "Sluttspill ikke generert enda.\nFullfør gruppespillet og trykk knappen over.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.adminTextSecondary),
+              Container(
+                color: AppColors.adminSurface,
+                child: TabBar(
+                  indicatorColor: AppColors.adminOrange,
+                  labelColor: AppColors.adminText,
+                  unselectedLabelColor: AppColors.adminTextSecondary,
+                  tabs: brackets.map((b) => Tab(
+                    icon: Icon(
+                      b == 'A' ? Icons.emoji_events
+                          : b == 'B' ? Icons.workspace_premium
+                          : Icons.military_tech,
+                      size: 16,
                     ),
-                  ),
-                )
-              else ...[
-                // Sub-tab bar
-                Container(
-                  color: AppColors.adminText,
-                  child: TabBar(
-                    indicatorColor: AppColors.adminText,
-                    labelColor: AppColors.adminText,
-                    unselectedLabelColor: AppColors.adminTextSecondary,
-                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    tabs: brackets.map((b) => Tab(
-                      icon: Icon(bracketIcons[b] ?? Icons.emoji_events, size: 16),
-                      text: "$b-Bracket",
-                    )).toList(),
-                  ),
+                    text: "$b-Bracket",
+                  )).toList(),
                 ),
-                const Divider(height: 1),
-
-                // Sub-tab content
-                Expanded(
-                  child: TabBarView(
-                    children: brackets.map((b) {
-                      final color = bracketColors[b] ?? AppColors.adminTextSecondary;
-                      final bMatches = forBracket(b);
-                      return _buildBracketList(b, color, bMatches);
-                    }).toList(),
-                  ),
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: brackets.map((b) {
+                    final bMatches = matches
+                        .where((m) => (m.data() as Map)['bracket'] == b)
+                        .toList();
+                    return _buildVisualBracket(b, bMatches);
+                  }).toList(),
                 ),
-              ],
+              ),
             ],
           ),
         );
@@ -1115,180 +1190,185 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  Widget _buildBracketList(String bracket, Color color, List<DocumentSnapshot> matches) {
-    // Group by round
-    final roundOrder = {'r16': 0, 'qf': 1, 'sf': 2, 'final': 3};
-    final roundLabels = {'r16': 'R16', 'qf': 'Kvartfinale', 'sf': 'Semifinale', 'final': 'FINALE'};
+  Widget _buildVisualBracket(String bracket, List<DocumentSnapshot> matches) {
+    if (matches.isEmpty) {
+      return const Center(child: Text("Ingen kamper.", style: TextStyle(color: AppColors.adminTextSecondary)));
+    }
+
+    const double cardW = 200.0;
+    const double cardH = 68.0;
+    const double colGap = 44.0;
+    const double cardGap = 16.0;
+    const double headerH = 28.0;
 
     final Map<String, List<DocumentSnapshot>> byRound = {};
     for (final m in matches) {
-      final r = (m.data() as Map)['round'] as String? ?? 'ukjent';
+      final r = (m.data() as Map)['round'] as String? ?? '';
       byRound.putIfAbsent(r, () => []).add(m);
     }
-    final rounds = byRound.keys.toList()
-      ..sort((a, b) => (roundOrder[a] ?? 9).compareTo(roundOrder[b] ?? 9));
+    for (final r in byRound.keys) {
+      byRound[r]!.sort((a, b) =>
+          ((a.data() as Map)['match_number'] as int? ?? 0)
+              .compareTo((b.data() as Map)['match_number'] as int? ?? 0));
+    }
 
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
-        // Bracket header
-        Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
+    const roundOrder = ['r16', 'qf', 'sf', 'final'];
+    final allRounds = roundOrder.where((r) => byRound.containsKey(r)).toList();
+    if (allRounds.isEmpty) return const SizedBox.shrink();
+
+    final firstCount = byRound[allRounds.first]!.length;
+    final unitH = cardH + cardGap;
+    final bracketH = firstCount * unitH - cardGap;
+
+    double centerY(int ri, int mi) {
+      final sp = 1 << ri;
+      return (mi * sp + sp * 0.5) * unitH - cardGap * 0.5;
+    }
+
+    final Map<int, Offset> pos = {};
+    for (int ri = 0; ri < allRounds.length; ri++) {
+      for (int mi = 0; mi < byRound[allRounds[ri]]!.length; mi++) {
+        final num = (byRound[allRounds[ri]]![mi].data() as Map)['match_number'] as int? ?? 0;
+        pos[num] = Offset(
+          ri * (cardW + colGap),
+          headerH + centerY(ri, mi) - cardH * 0.5,
+        );
+      }
+    }
+
+    final totalW = allRounds.length * cardW + (allRounds.length - 1) * colGap + 16;
+    final totalH = headerH + bracketH + 24;
+
+    const roundLabels = {
+      'r16': 'R16', 'qf': 'KVARTFINALE', 'sf': 'SEMIFINALE', 'final': 'FINALE'
+    };
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      scrollDirection: Axis.horizontal,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.vertical,
+        child: SizedBox(
+          width: totalW,
+          height: totalH,
+          child: Stack(
             children: [
-              Icon(
-                bracket == 'A' ? Icons.emoji_events : bracket == 'B' ? Icons.workspace_premium : Icons.military_tech,
-                color: AppColors.adminText, size: 20),
-              const SizedBox(width: 10),
-              Text(
-                "$bracket-SLUTTSPILL",
-                style: const TextStyle(
-                    color: AppColors.adminText, fontWeight: FontWeight.bold, fontSize: 15),
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _BracketPainter(
+                    pos: pos,
+                    byRound: byRound,
+                    allRounds: allRounds,
+                    cardW: cardW,
+                    cardH: cardH,
+                    colGap: colGap,
+                  ),
+                ),
               ),
-              const Spacer(),
-              Text(
-                "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}/${matches.length} kamper",
-                style: const TextStyle(color: AppColors.adminTextSecondary, fontSize: 11),
-              ),
+              for (int ri = 0; ri < allRounds.length; ri++)
+                Positioned(
+                  left: ri * (cardW + colGap),
+                  top: 0, width: cardW, height: headerH,
+                  child: Center(
+                    child: Text(
+                      roundLabels[allRounds[ri]] ?? allRounds[ri].toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10,
+                          color: AppColors.adminOrange, letterSpacing: 0.8),
+                    ),
+                  ),
+                ),
+              for (final m in matches)
+                Builder(builder: (_) {
+                  final d = m.data() as Map<String, dynamic>;
+                  final num = d['match_number'] as int? ?? 0;
+                  final p = pos[num];
+                  if (p == null) return const SizedBox.shrink();
+                  return Positioned(
+                    left: p.dx, top: p.dy, width: cardW, height: cardH,
+                    child: GestureDetector(
+                      onTap: () => _showMatchEditDialog(m),
+                      child: _bracketCard(d),
+                    ),
+                  );
+                }),
             ],
           ),
         ),
-
-        // Rounds
-        for (final round in rounds) ...[
-          Container(
-            margin: const EdgeInsets.only(top: 8, bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: color.withOpacity(0.3)),
-            ),
-            child: Text(
-              roundLabels[round] ?? round.toUpperCase(),
-              style: TextStyle(
-                  fontWeight: FontWeight.bold, fontSize: 12, color: color),
-            ),
-          ),
-          ...byRound[round]!.map(_buildPlayoffMatchRow),
-        ],
-      ],
+      ),
     );
   }
 
-  Widget _buildPlayoffMatchRow(DocumentSnapshot matchDoc) {
-    final d = matchDoc.data() as Map<String, dynamic>;
+  Widget _bracketCard(Map<String, dynamic> d) {
     final status = d['status'] as String? ?? 'pending';
-    final round = d['round'] as String? ?? '';
-    final num = d['match_number'] as int? ?? 0;
     final isFinished = status == 'finished';
-    final isPending = status == 'pending';
-    final isPlaceholder = d['team_a_id'] == 'placeholder' || d['team_b_id'] == 'placeholder';
+    final isAPH = (d['team_a_id'] as String? ?? '') == 'placeholder';
+    final isBPH = (d['team_b_id'] as String? ?? '') == 'placeholder';
+    final isPending = isAPH || isBPH || status == 'pending';
+    final homeScore = d['home_score'] as int? ?? 0;
+    final awayScore = d['away_score'] as int? ?? 0;
+    final homeWins = isFinished && homeScore > awayScore;
+    final awayWins = isFinished && awayScore > homeScore;
 
-    String roundLabel = round;
-    if (round == 'r16') roundLabel = 'R16';
-    if (round == 'qf') roundLabel = 'Kvartfinale';
-    if (round == 'sf') roundLabel = 'Semifinale';
-    if (round == 'final') roundLabel = 'FINALE';
+    Widget row(String name, bool wins, int score, bool isPH) => Container(
+      height: 28,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      color: wins ? AppColors.green.withOpacity(0.12) : Colors.transparent,
+      child: Row(children: [
+        Expanded(
+          child: Text(
+            name.isEmpty ? 'TBD' : name,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: wins ? FontWeight.bold : FontWeight.normal,
+              color: isPH ? AppColors.adminTextSecondary
+                  : (wins ? AppColors.green : AppColors.adminText),
+              fontStyle: isPH ? FontStyle.italic : FontStyle.normal,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (isFinished)
+          Text('$score', style: TextStyle(
+            fontSize: 12, fontWeight: FontWeight.bold,
+            color: wins ? AppColors.green : AppColors.adminTextSecondary,
+          )),
+      ]),
+    );
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.adminSurface,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: isFinished ? AppColors.green.withOpacity(0.4)
+              : isPending ? AppColors.adminSurfaceElevated.withOpacity(0.5)
+              : AppColors.adminSurfaceElevated,
+          width: isFinished ? 1.5 : 1,
+        ),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 3, offset: const Offset(0, 1))],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 85,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Kamp $num', style: TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
-                  Text(roundLabel,
-                      style: TextStyle(
-                          fontSize: 11, color: AppColors.adminText, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    d['team_a_name'] ?? 'TBD',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isPending ? AppColors.adminTextSecondary: null,
-                      fontStyle: isPending ? FontStyle.italic : null,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    d['team_b_name'] ?? 'TBD',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isPending ? AppColors.adminTextSecondary: null,
-                      fontStyle: isPending ? FontStyle.italic : null,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            if (isFinished)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(
-                  '${d['home_score']} – ${d['away_score']}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.green),
-                ),
-              )
-            else
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: isPending ? AppColors.adminTextSecondary: AppColors.adminSurfaceElevated,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  isPending ? 'Venter' : 'Planlagt',
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: isPending ? AppColors.adminTextSecondary: AppColors.adminOrange),
+            row(d['team_a_name'] as String? ?? 'TBD', homeWins, homeScore, isAPH),
+            Container(height: 1, color: AppColors.adminSurfaceElevated),
+            row(d['team_b_name'] as String? ?? 'TBD', awayWins, awayScore, isBPH),
+            Container(
+              height: 12,
+              color: AppColors.adminSurfaceElevated,
+              alignment: Alignment.center,
+              child: Text(
+                isFinished ? '$homeScore – $awayScore'
+                    : (d['match_time'] as String? ?? (isPending ? 'Venter...' : 'Planlagt')),
+                style: TextStyle(
+                  fontSize: 8,
+                  color: isFinished ? AppColors.green
+                      : isPending ? AppColors.adminTextSecondary
+                      : AppColors.adminOrange,
                 ),
               ),
-            IconButton(
-              icon: const Icon(Icons.edit, size: 18, color: AppColors.adminTextSecondary),
-              tooltip: "Rediger kamp",
-              onPressed: () => _showMatchEditDialog(matchDoc),
-            ),
-            IconButton(
-              icon: const Icon(Icons.qr_code, size: 18),
-              tooltip: "QR",
-              onPressed: () =>
-                  _showQrDialog(matchDoc.id, d['team_a_name'] ?? 'A', d['team_b_name'] ?? 'B'),
-            ),
-            IconButton(
-              icon: Icon(Icons.sports_esports,
-                  size: 18, color: isPlaceholder ? AppColors.adminTextSecondary : AppColors.green),
-              tooltip: "Styr kamp",
-              onPressed: isPlaceholder
-                  ? null
-                  : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => MatchControlPage(
-                            matchId: matchDoc.id,
-                            teamAName: d['team_a_name'] ?? 'Lag A',
-                            teamBName: d['team_b_name'] ?? 'Lag B',
-                          ),
-                        ),
-                      ),
             ),
           ],
         ),
@@ -1296,71 +1376,363 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  // ─── UI ───────────────────────────────────────────────────────────────────
+  // ─── Program-fanen – Tournify-stil kampskjema ──────────────────────────────
+
+  Widget _buildScheduleTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('matches')
+          .where('tournament_id', isEqualTo: widget.tournamentId)
+          .snapshots(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        final allMatches = snap.data!.docs;
+
+        if (allMatches.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.schedule, size: 56, color: AppColors.adminOrange),
+                  const SizedBox(height: 16),
+                  const Text("Ingen kamper planlagt enda.",
+                      style: TextStyle(color: AppColors.adminText, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Generer grupper og sett kamptider via Auto-skjema.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.adminTextSecondary, fontSize: 13),
+                  ),
+                  const SizedBox(height: 24),
+                  StreamBuilder<DocumentSnapshot>(
+                    stream: FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).snapshots(),
+                    builder: (ctx2, tSnap) {
+                      final td = tSnap.data?.data() as Map<String, dynamic>? ?? {};
+                      return ElevatedButton.icon(
+                        icon: const Icon(Icons.auto_fix_high),
+                        label: const Text("Auto-skjema"),
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => TournamentSchedulePage(
+                            tournamentId: widget.tournamentId,
+                            tournamentName: widget.tournamentName,
+                            courtsCount: (td['courts_count'] as num?)?.toInt() ?? 4,
+                            matchDurationMinutes: (td['match_duration_minutes'] as num?)?.toInt() ?? 60,
+                          ),
+                        )),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final sorted = List<DocumentSnapshot>.from(allMatches)
+          ..sort((a, b) {
+            final am = (a.data() as Map)['scheduled_minutes'] as int? ?? 9999;
+            final bm = (b.data() as Map)['scheduled_minutes'] as int? ?? 9999;
+            if (am != bm) return am.compareTo(bm);
+            final ac = (a.data() as Map)['court'] as String? ?? '';
+            final bc = (b.data() as Map)['court'] as String? ?? '';
+            return ac.compareTo(bc);
+          });
+
+        final Map<String, List<DocumentSnapshot>> byDate = {};
+        for (final m in sorted) {
+          final date = (m.data() as Map)['match_date'] as String? ?? 'Kampdag';
+          byDate.putIfAbsent(date, () => []).add(m);
+        }
+        final sortedDates = byDate.keys.toList()..sort();
+
+        return Column(
+          children: [
+            StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).snapshots(),
+              builder: (ctx2, tSnap) {
+                final td = tSnap.data?.data() as Map<String, dynamic>? ?? {};
+                return Container(
+                  color: AppColors.adminSurface,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      const Text("Kampprogram", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.adminText)),
+                      const Spacer(),
+                      TextButton.icon(
+                        icon: const Icon(Icons.auto_fix_high, size: 16, color: AppColors.adminOrange),
+                        label: const Text("Auto-skjema", style: TextStyle(color: AppColors.adminOrange, fontSize: 13)),
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => TournamentSchedulePage(
+                            tournamentId: widget.tournamentId,
+                            tournamentName: widget.tournamentName,
+                            courtsCount: (td['courts_count'] as num?)?.toInt() ?? 4,
+                            matchDurationMinutes: (td['match_duration_minutes'] as num?)?.toInt() ?? 60,
+                          ),
+                        )),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                itemCount: sortedDates.length,
+                itemBuilder: (ctx, i) =>
+                    _buildDaySection(sortedDates[i], byDate[sortedDates[i]]!),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDaySection(String date, List<DocumentSnapshot> matches) {
+    final Map<String, List<DocumentSnapshot>> byTime = {};
+    for (final m in matches) {
+      final time = (m.data() as Map)['match_time'] as String? ?? '--:--';
+      byTime.putIfAbsent(time, () => []).add(m);
+    }
+    final sortedTimes = byTime.keys.toList()..sort();
+
+    final finished = matches.where((m) => (m.data() as Map)['status'] == 'finished').length;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ExpansionTile(
+        initiallyExpanded: true,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        title: Text(date, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.adminText)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text("$finished/${matches.length}",
+                style: TextStyle(
+                    fontSize: 12,
+                    color: finished == matches.length ? AppColors.green : AppColors.adminTextSecondary)),
+            const SizedBox(width: 4),
+            const Icon(Icons.expand_more, color: AppColors.adminTextSecondary),
+          ],
+        ),
+        children: [
+          for (final time in sortedTimes) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.adminSurfaceElevated,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(time,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.adminOrange)),
+                  ),
+                  Expanded(child: Container(height: 1, margin: const EdgeInsets.only(left: 10), color: AppColors.adminSurfaceElevated)),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Wrap(
+                spacing: 8, runSpacing: 8,
+                children: byTime[time]!.map(_buildScheduleCard).toList(),
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScheduleCard(DocumentSnapshot matchDoc) {
+    final d = matchDoc.data() as Map<String, dynamic>;
+    final stage = d['stage'] as String? ?? '';
+    final group = d['group'] as String?;
+    final bracket = d['bracket'] as String?;
+    final round = d['round'] as String?;
+    final court = d['court'] as String? ?? 'TBD';
+    final status = d['status'] as String? ?? 'scheduled';
+    final isFinished = status == 'finished';
+    final isLive = status == 'live';
+    final isPending = status == 'pending';
+    final isWalkover = d['walkover'] as bool? ?? false;
+
+    String stageLabel = '';
+    if (stage == 'group') {
+      final mType = d['match_type'] as String? ?? '';
+      final matchLabel = {'group_match_1':' – K1','group_match_2':' – K2','group_match_3':' – K3','group_match_4':' – K4'}[mType] ?? '';
+      stageLabel = 'Pulje $group$matchLabel';
+    }
+    if (stage == 'playoff') {
+      final bl = bracket?.toUpperCase() ?? '';
+      final rl = const {'r16':'R16','qf':'KF','sf':'SF','final':'Finale'}[round] ?? '';
+      stageLabel = '$bl-Bracket $rl';
+    }
+
+    final teamA = d['team_a_name'] as String? ?? 'TBD';
+    final teamB = d['team_b_name'] as String? ?? 'TBD';
+    final homeScore = d['home_score'] as int? ?? 0;
+    final awayScore = d['away_score'] as int? ?? 0;
+    final homeWins = isFinished && homeScore > awayScore;
+    final awayWins = isFinished && awayScore > homeScore;
+
+    Color statusColor = AppColors.adminTextSecondary;
+    String statusLabel = 'Planlagt';
+    if (isLive) { statusColor = AppColors.coral; statusLabel = '● LIVE'; }
+    else if (isFinished) { statusColor = AppColors.green; statusLabel = isWalkover ? 'Walkover' : 'Ferdig'; }
+    else if (isPending) statusLabel = 'Venter...';
+
+    Widget teamRow(String name, bool wins, int? score) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: Row(children: [
+        Icon(Icons.sports_volleyball, size: 12,
+            color: wins ? AppColors.adminText : AppColors.adminTextSecondary),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(name,
+              style: TextStyle(
+                  fontSize: 12, fontWeight: wins ? FontWeight.bold : FontWeight.normal,
+                  color: wins ? AppColors.adminText : AppColors.adminTextSecondary),
+              overflow: TextOverflow.ellipsis),
+        ),
+        if (score != null)
+          Text('$score', style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.bold,
+              color: wins ? AppColors.adminText : AppColors.adminTextSecondary)),
+      ]),
+    );
+
+    return GestureDetector(
+      onTap: () => _showMatchEditDialog(matchDoc),
+      child: Container(
+        width: 215,
+        decoration: BoxDecoration(
+          color: AppColors.adminSurface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isLive ? AppColors.coral.withOpacity(0.6)
+                : isFinished ? AppColors.green.withOpacity(0.25)
+                : AppColors.adminSurfaceElevated,
+            width: isLive ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 7, 10, 5),
+              child: Row(children: [
+                Expanded(
+                  child: Text(stageLabel,
+                      style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(color: AppColors.adminSurfaceElevated, borderRadius: BorderRadius.circular(4)),
+                  child: Text(court,
+                      style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                ),
+              ]),
+            ),
+            Container(height: 1, color: AppColors.adminSurfaceElevated),
+            teamRow(teamA, homeWins, isFinished ? homeScore : null),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 1),
+              child: Text(
+                isFinished ? '$homeScore  –  $awayScore' : (d['match_time'] as String? ?? ''),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: isFinished ? 13 : 11, fontWeight: FontWeight.bold,
+                  color: isFinished ? AppColors.green : AppColors.adminOrange,
+                ),
+              ),
+            ),
+            teamRow(teamB, awayWins, isFinished ? awayScore : null),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              decoration: const BoxDecoration(
+                color: AppColors.adminSurfaceElevated,
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(10)),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text(statusLabel, style: TextStyle(fontSize: 10, color: statusColor, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 6),
+                const Icon(Icons.edit, size: 10, color: AppColors.adminTextSecondary),
+              ]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── UI shell ─────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text("Admin: ${widget.tournamentName}"),
-        
-        
         actions: [
           IconButton(
             icon: const Icon(Icons.how_to_reg),
             tooltip: "Påmeldinger",
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => RegistrationsPage(
-                  tournamentId: widget.tournamentId,
-                  tournamentName: widget.tournamentName,
-                  tournamentType: 'nt_master',
-                ),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => RegistrationsPage(
+                tournamentId: widget.tournamentId,
+                tournamentName: widget.tournamentName,
+                tournamentType: 'nt_master',
               ),
-            ),
+            )),
           ),
           IconButton(
             icon: const Icon(Icons.edit),
             tooltip: "Rediger turnering",
             onPressed: () async {
               final doc = await FirebaseFirestore.instance
-                  .collection('tournaments')
-                  .doc(widget.tournamentId)
-                  .get();
+                  .collection('tournaments').doc(widget.tournamentId).get();
               if (!mounted) return;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EditTournamentPage(
-                    tournamentId: widget.tournamentId,
-                    initialData: doc.data() ?? {},
-                  ),
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => EditTournamentPage(
+                  tournamentId: widget.tournamentId,
+                  initialData: doc.data() ?? {},
                 ),
-              );
+              ));
             },
           ),
           PopupMenuButton<String>(
             tooltip: "Avanserte handlinger",
             icon: const Icon(Icons.more_vert),
             onSelected: (v) {
-              if (v == 'reset_groups') _resetGroupStage();
-              if (v == 'reset_playoffs') _resetPlayoffs();
+              if (v == 'sync') _resolvePendingMatches().then((_) => _snack("Synkronisert."));
+              if (v == 'reset') _resetTournament();
             },
             itemBuilder: (ctx) => [
               const PopupMenuItem(
-                value: 'reset_groups',
+                value: 'sync',
                 child: ListTile(
-                  leading: Icon(Icons.restart_alt, color: AppColors.adminOrange),
-                  title: Text("Nullstill gruppespill"),
+                  leading: Icon(Icons.sync, color: AppColors.adminOrange),
+                  title: Text("Sync bracket"),
+                  subtitle: Text("Oppdater kryssninger manuelt", style: TextStyle(fontSize: 11)),
                   dense: true,
                 ),
               ),
+              const PopupMenuDivider(),
               const PopupMenuItem(
-                value: 'reset_playoffs',
+                value: 'reset',
                 child: ListTile(
                   leading: Icon(Icons.restart_alt, color: AppColors.adminOrange),
-                  title: Text("Nullstill sluttspill"),
+                  title: Text("Nullstill hele turneringen"),
+                  subtitle: Text("Sletter alle kamper, beholder lag", style: TextStyle(fontSize: 11)),
                   dense: true,
                 ),
               ),
@@ -1401,83 +1773,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               onPressed: _showAddTeamDialog,
               label: const Text("Nytt Lag"),
               icon: const Icon(Icons.group_add),
-              
-              
             )
           : null,
     );
   }
 
-  // ─── Program-fanen ────────────────────────────────────────────────────────
-
-  Widget _buildScheduleTab() {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('tournaments')
-          .doc(widget.tournamentId)
-          .snapshots(),
-      builder: (ctx, snap) {
-        final data = snap.data?.data() as Map<String, dynamic>? ?? {};
-        final courts = (data['courts_count'] as num?)?.toInt() ?? 4;
-        final duration = (data['match_duration_minutes'] as num?)?.toInt() ?? 60;
-
-        return Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.schedule, size: 56, color: AppColors.adminOrange),
-                const SizedBox(height: 16),
-                Text(
-                  "Kampskjema & Kryssninger",
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.adminText),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  "Se hele turneringen samlet:\ntidskjema per bane, og alle kampkryssninger\ngjennom puljespill og sluttspill.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: AppColors.adminTextSecondary),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text("Åpne kampskjema"),
-                  style: ElevatedButton.styleFrom(
-                    
-                    
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 14),
-                    textStyle: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold),
-                  ),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => TournamentSchedulePage(
-                        tournamentId: widget.tournamentId,
-                        tournamentName: widget.tournamentName,
-                        courtsCount: courts,
-                        matchDurationMinutes: duration,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  "$courts baner  •  $duration min per kamp",
-                  style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+  // ─── Category selector ────────────────────────────────────────────────────
 
   Widget _buildCategorySelector() {
     return Container(
@@ -1494,17 +1795,13 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           if (cats.isEmpty) {
             return const Padding(
               padding: EdgeInsets.all(8),
-              child: Text("Ingen klasser funnet. Legg til klasser ved turneringsopprettelse.",
-                  style: TextStyle(color: AppColors.adminOrange)),
+              child: Text("Ingen klasser funnet.", style: TextStyle(color: AppColors.adminOrange)),
             );
           }
 
-          // Auto-select first if none selected
           if (_selectedCategoryId == null && cats.isNotEmpty) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              setState(() {
-                _selectedCategoryId = cats.first.id;
-              });
+              setState(() { _selectedCategoryId = cats.first.id; });
             });
           }
 
@@ -1547,7 +1844,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           child: ElevatedButton.icon(
             icon: const Icon(Icons.auto_awesome),
             label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrangeHover, foregroundColor: AppColors.adminText),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.adminOrangeHover, foregroundColor: AppColors.adminText),
             onPressed: _autoGenerateTeams,
           ),
         ),
@@ -1561,14 +1859,16 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             builder: (ctx, snap) {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
               final teams = snap.data!.docs;
-              if (teams.isEmpty) return const Center(child: Text("Ingen lag registrert enda.\nTrykk + for å legge til lag.", textAlign: TextAlign.center));
+              if (teams.isEmpty) return const Center(
+                  child: Text("Ingen lag registrert enda.\nTrykk + for å legge til lag.",
+                      textAlign: TextAlign.center));
 
               final sorted = List<DocumentSnapshot>.from(teams)
                 ..sort((a, b) {
                   final as_ = (a.data() as Map)['seed'] as int? ?? 999;
-                  final bs = (b.data() as Map)['seed'] as int? ?? 999;
-                  final ap = (a.data() as Map)['team_points'] as num? ?? 0;
-                  final bp = (b.data() as Map)['team_points'] as num? ?? 0;
+                  final bs  = (b.data() as Map)['seed'] as int? ?? 999;
+                  final ap  = (a.data() as Map)['team_points'] as num? ?? 0;
+                  final bp  = (b.data() as Map)['team_points'] as num? ?? 0;
                   if (as_ != 999 || bs != 999) return as_.compareTo(bs);
                   return bp.compareTo(ap);
                 });
@@ -1607,7 +1907,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete, color: AppColors.adminOrange),
-                            onPressed: () => _confirmDeleteTeam(sorted[i].id, d['team_name'] ?? 'laget'),
+                            onPressed: () => _confirmDeleteTeam(
+                                sorted[i].id, d['team_name'] ?? 'laget'),
                           ),
                         ],
                       ),
@@ -1631,51 +1932,30 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
     return Column(
       children: [
-        // Action buttons
         Container(
-          padding: const EdgeInsets.all(12),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.shuffle, size: 16),
-                label: const Text("Generer Grupper\n(Runde 1)"),
-                style: ElevatedButton.styleFrom(
-                     
-                    textStyle: const TextStyle(fontSize: 12)),
-                onPressed: _generateGroupStage,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.emoji_events, size: 16),
+              label: const Text("Generer Grupper + Sluttspill"),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow, size: 16),
-                label: const Text("Sett opp\nRunde 2"),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.adminOrangeHover, 
-                    textStyle: const TextStyle(fontSize: 12)),
-                onPressed: _generateGroupRound2,
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.leaderboard, size: 16),
-                label: const Text("Beregn\nPlasseringer"),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.green, 
-                    textStyle: const TextStyle(fontSize: 12)),
-                onPressed: _finalizePlacements,
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.auto_awesome, size: 16),
-                label: const Text("Simuler\nAlt"),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.adminOrangeHover, 
-                    textStyle: const TextStyle(fontSize: 12)),
-                onPressed: _simulateAll,
-              ),
-            ],
+              onPressed: _generateGroupStage,
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: const Text(
+            "Trykk én gang – setter opp grupper, runde 2 og sluttspillkryssninger automatisk.",
+            style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary),
+            textAlign: TextAlign.center,
           ),
         ),
         const Divider(height: 1),
-        // Groups display
         Expanded(child: _buildGroupsDisplay()),
       ],
     );
@@ -1692,7 +1972,6 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         if (!teamSnap.hasData) return const Center(child: CircularProgressIndicator());
         final allTeams = teamSnap.data!.docs;
 
-        // Collect unique group names
         final groupNames = allTeams
             .map((t) => (t.data() as Map)['group'] as String?)
             .whereType<String>()
@@ -1702,8 +1981,9 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
         if (groupNames.isEmpty) {
           return const Center(
-            child: Text("Grupper ikke generert enda.\nTrykk \"Generer Grupper\" over.",
-                textAlign: TextAlign.center),
+            child: Text("Ingen grupper ennå.\nTrykk \"Generer Grupper + Sluttspill\" over.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.adminTextSecondary)),
           );
         }
 
@@ -1721,21 +2001,21 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               padding: const EdgeInsets.all(16),
               itemCount: groupNames.length,
               itemBuilder: (ctx, i) {
-                final groupName = groupNames[i];
+                final gn = groupNames[i];
                 final groupTeams = allTeams
-                    .where((t) => (t.data() as Map)['group'] == groupName)
+                    .where((t) => (t.data() as Map)['group'] == gn)
                     .toList()
                   ..sort((a, b) {
                     final ap = (a.data() as Map)['group_placement'] as int? ?? 99;
                     final bp = (b.data() as Map)['group_placement'] as int? ?? 99;
                     if (ap != 99 || bp != 99) return ap.compareTo(bp);
                     final as_ = (a.data() as Map)['seed'] as int? ?? 99;
-                    final bs = (b.data() as Map)['seed'] as int? ?? 99;
+                    final bs  = (b.data() as Map)['seed'] as int? ?? 99;
                     return as_.compareTo(bs);
                   });
 
                 final groupMatches = allMatches
-                    .where((m) => (m.data() as Map)['group'] == groupName)
+                    .where((m) => (m.data() as Map)['group'] == gn)
                     .toList()
                   ..sort((a, b) {
                     final ta = (a.data() as Map)['match_type'] as String? ?? '';
@@ -1750,22 +2030,29 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        color: AppColors.adminText,
-                        child: Text("Pulje $groupName",
-                            style: const TextStyle(color: AppColors.adminText, fontWeight: FontWeight.bold, fontSize: 16)),
+                        decoration: const BoxDecoration(
+                          color: AppColors.adminSurfaceElevated,
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                        ),
+                        child: Text("Pulje $gn",
+                            style: const TextStyle(color: AppColors.adminText,
+                                fontWeight: FontWeight.bold, fontSize: 16)),
                       ),
-                      // Teams
                       ...groupTeams.asMap().entries.map((e) {
                         final idx = e.key;
                         final d = e.value.data() as Map<String, dynamic>;
                         final placement = d['group_placement'] as int?;
                         final seed = d['seed'] as int?;
+                        final placeBgColors = [
+                          Colors.amber[700]!, AppColors.adminTextSecondary,
+                          Colors.brown[400]!, AppColors.adminTextSecondary
+                        ];
                         return ListTile(
                           dense: true,
                           leading: CircleAvatar(
                             radius: 14,
-                            backgroundColor: placement != null
-                                ? [Colors.amber[700], AppColors.adminTextSecondary, Colors.brown[400], AppColors.adminTextSecondary][placement - 1]
+                            backgroundColor: placement != null && placement <= 4
+                                ? placeBgColors[placement - 1]
                                 : AppColors.adminSurfaceElevated,
                             child: Text(
                               placement?.toString() ?? (idx + 1).toString(),
@@ -1779,16 +2066,17 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                         );
                       }),
                       const Divider(height: 1),
-                      // Matches
                       Padding(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                         child: Text("KAMPER",
-                            style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary, fontWeight: FontWeight.bold)),
+                            style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary,
+                                fontWeight: FontWeight.bold)),
                       ),
                       if (groupMatches.isEmpty)
                         const Padding(
                           padding: EdgeInsets.all(12),
-                          child: Text("Ingen kamper enda.", style: TextStyle(color: AppColors.adminTextSecondary)),
+                          child: Text("Ingen kamper enda.",
+                              style: TextStyle(color: AppColors.adminTextSecondary)),
                         )
                       else
                         ...groupMatches.map((m) => _buildMatchRow(m)),
@@ -1809,13 +2097,15 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     final mType = d['match_type'] as String? ?? '';
     final status = d['status'] as String? ?? 'scheduled';
     final isFinished = status == 'finished';
+    final isPending  = status == 'pending';
     final isPlaceholder = d['team_a_id'] == 'placeholder' || d['team_b_id'] == 'placeholder';
 
-    String label = mType;
-    if (mType == 'group_match_1') label = 'Kamp 1 (S1 vs S4)';
-    if (mType == 'group_match_2') label = 'Kamp 2 (S2 vs S3)';
-    if (mType == 'group_match_3') label = 'Vinnerkamp → 1./2.';
-    if (mType == 'group_match_4') label = 'Taperkamp → 3./4.';
+    const labels = {
+      'group_match_1': 'Kamp 1 (S1 vs S4)',
+      'group_match_2': 'Kamp 2 (S2 vs S3)',
+      'group_match_3': 'Vinnerkamp → 1./2.',
+      'group_match_4': 'Taperkamp → 3./4.',
+    };
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1825,10 +2115,16 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: TextStyle(fontSize: 10, color: AppColors.adminText, fontWeight: FontWeight.bold)),
+                Text(labels[mType] ?? mType,
+                    style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary,
+                        fontWeight: FontWeight.bold)),
                 Text(
                   "${d['team_a_name'] ?? 'TBD'} vs ${d['team_b_name'] ?? 'TBD'}",
-                  style: const TextStyle(fontSize: 13),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isPending ? AppColors.adminTextSecondary : AppColors.adminText,
+                    fontStyle: isPending ? FontStyle.italic : FontStyle.normal,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 if (isFinished)
@@ -1837,49 +2133,120 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               ],
             ),
           ),
-          // Status chip
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: isFinished ? AppColors.green.withOpacity(0.2) : (status == 'live' ? AppColors.adminOrange.withOpacity(0.2) : AppColors.adminTextSecondary),
+              color: isFinished ? AppColors.green.withOpacity(0.2)
+                  : status == 'live' ? AppColors.adminOrange.withOpacity(0.2)
+                  : isPending ? Colors.transparent
+                  : AppColors.adminSurfaceElevated,
               borderRadius: BorderRadius.circular(12),
+              border: isPending ? Border.all(color: AppColors.adminSurfaceElevated) : null,
             ),
             child: Text(
-              isFinished ? 'Ferdig' : (status == 'live' ? 'LIVE' : 'Planlagt'),
+              isFinished ? 'Ferdig' : status == 'live' ? 'LIVE' : isPending ? 'Venter' : 'Planlagt',
               style: TextStyle(
                 fontSize: 10,
-                color: isFinished ? AppColors.green : (status == 'live' ? AppColors.adminOrangeHover : AppColors.adminTextSecondary),
+                color: isFinished ? AppColors.green
+                    : status == 'live' ? AppColors.adminOrangeHover
+                    : AppColors.adminTextSecondary,
               ),
             ),
           ),
           const SizedBox(width: 4),
-          // Edit button
-          IconButton(
-            icon: const Icon(Icons.edit, size: 18, color: AppColors.adminTextSecondary),
-            tooltip: "Rediger kamp",
-            onPressed: () => _showMatchEditDialog(matchDoc),
-          ),
-          // QR button
-          IconButton(
-            icon: const Icon(Icons.qr_code, size: 20),
-            tooltip: "Vis QR",
-            onPressed: () => _showQrDialog(matchDoc.id, d['team_a_name'] ?? 'A', d['team_b_name'] ?? 'B'),
-          ),
-          // Control button
-          IconButton(
-            icon: Icon(Icons.sports_esports, size: 20, color: isPlaceholder ? AppColors.adminTextSecondary : AppColors.green),
-            tooltip: "Styr kamp",
-            onPressed: isPlaceholder ? null : () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => MatchControlPage(
-                matchId: matchDoc.id,
-                teamAName: d['team_a_name'] ?? 'Lag A',
-                teamBName: d['team_b_name'] ?? 'Lag B',
-              )),
+          if (!isPending) ...[
+            IconButton(
+              icon: const Icon(Icons.edit, size: 18, color: AppColors.adminTextSecondary),
+              tooltip: "Rediger kamp",
+              onPressed: () => _showMatchEditDialog(matchDoc),
             ),
-          ),
+            IconButton(
+              icon: const Icon(Icons.qr_code, size: 20),
+              tooltip: "Vis QR",
+              onPressed: () => _showQrDialog(
+                  matchDoc.id, d['team_a_name'] ?? 'A', d['team_b_name'] ?? 'B'),
+            ),
+            IconButton(
+              icon: Icon(Icons.sports_esports, size: 20,
+                  color: isPlaceholder ? AppColors.adminTextSecondary : AppColors.green),
+              tooltip: "Styr kamp",
+              onPressed: isPlaceholder ? null : () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => MatchControlPage(
+                  matchId: matchDoc.id,
+                  teamAName: d['team_a_name'] ?? 'Lag A',
+                  teamBName: d['team_b_name'] ?? 'Lag B',
+                )),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+}
+
+// ─── Bracket line painter ──────────────────────────────────────────────────
+
+class _BracketPainter extends CustomPainter {
+  final Map<int, Offset> pos;
+  final Map<String, List<DocumentSnapshot>> byRound;
+  final List<String> allRounds;
+  final double cardW, cardH, colGap;
+
+  const _BracketPainter({
+    required this.pos,
+    required this.byRound,
+    required this.allRounds,
+    required this.cardW,
+    required this.cardH,
+    required this.colGap,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF1E2E54)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    for (int ri = 0; ri < allRounds.length - 1; ri++) {
+      final curMs  = byRound[allRounds[ri]]!;
+      final nextMs = byRound[allRounds[ri + 1]]!;
+      final midXOffset = cardW + colGap / 2;
+
+      for (int mi = 0; mi < curMs.length; mi += 2) {
+        final n1 = (curMs[mi].data() as Map)['match_number'] as int? ?? 0;
+        final p1 = pos[n1];
+        if (p1 == null) continue;
+        final cy1 = p1.dy + cardH / 2;
+        final midX = p1.dx + midXOffset;
+
+        canvas.drawLine(Offset(p1.dx + cardW, cy1), Offset(midX, cy1), paint);
+
+        if (mi + 1 < curMs.length) {
+          final n2 = (curMs[mi + 1].data() as Map)['match_number'] as int? ?? 0;
+          final p2 = pos[n2];
+          if (p2 == null) continue;
+          final cy2 = p2.dy + cardH / 2;
+
+          canvas.drawLine(Offset(p2.dx + cardW, cy2), Offset(midX, cy2), paint);
+          canvas.drawLine(Offset(midX, cy1), Offset(midX, cy2), paint);
+
+          final nextIdx = mi ~/ 2;
+          if (nextIdx < nextMs.length) {
+            final nN = (nextMs[nextIdx].data() as Map)['match_number'] as int? ?? 0;
+            final pN = pos[nN];
+            if (pN != null) {
+              final cyN = pN.dy + cardH / 2;
+              canvas.drawLine(Offset(midX, cyN), Offset(pN.dx, cyN), paint);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

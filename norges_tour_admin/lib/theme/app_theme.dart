@@ -112,7 +112,7 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.coral,
           foregroundColor: AppColors.ink,
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
           textStyle: AppText.uiCta,
           elevation: 0,
@@ -123,7 +123,7 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.ink,
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
           side: BorderSide(color: AppColors.line),
           textStyle: AppText.uiCta.copyWith(color: AppColors.ink, fontWeight: FontWeight.w700),
@@ -203,7 +203,7 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.coral,
           foregroundColor: AppColors.nightSurface0,
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
           textStyle: AppText.uiCta,
           elevation: 0,
@@ -278,7 +278,7 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.adminOrange,
           foregroundColor: Colors.white,
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
           textStyle: AppText.uiCta,
           elevation: 0,
@@ -287,7 +287,7 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.adminText,
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
           side: BorderSide(color: Colors.white.withOpacity(0.2)),
           textStyle: AppText.uiCta.copyWith(color: AppColors.adminText, fontWeight: FontWeight.w700),

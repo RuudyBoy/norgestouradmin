@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // brukes i AdminDashboard
 import 'firebase_options.dart';
 import 'add_tournament_page.dart';
 import 'tournament_control_page.dart';
@@ -48,43 +48,14 @@ class AuthGate extends StatelessWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
         }
-        if (!snapshot.hasData) {
-          return const AdminLoginPage();
+        if (snapshot.hasData) {
+          return const AdminDashboard();
         }
-        
-        return FutureBuilder<DocumentSnapshot>(
-          future: FirebaseFirestore.instance.collection('admins').doc(snapshot.data!.uid).get(),
-          builder: (context, adminSnapshot) {
-            if (adminSnapshot.connectionState == ConnectionState.waiting) {
-              return const Scaffold(body: Center(child: CircularProgressIndicator()));
-            }
-            if (adminSnapshot.hasData && adminSnapshot.data!.exists) {
-              return const AdminDashboard();
-            }
-            
-            return Scaffold(
-              body: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                    const SizedBox(height: 16),
-                    const Text("Du har ikke admin-tilgang.", style: TextStyle(fontSize: 20)),
-                    const SizedBox(height: 8),
-                    Text("UID: ${snapshot.data!.uid}", style: const TextStyle(color: AppColors.adminTextSecondary)),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () => FirebaseAuth.instance.signOut(),
-                      child: const Text("Logg ut"),
-                    )
-                  ],
-                )
-              )
-            );
-          },
-        );
+        return const AdminLoginPage();
       },
     );
   }
@@ -237,6 +208,7 @@ class AdminDashboard extends StatelessWidget {
                   ),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       const SizedBox(height: 4),
                      Row(
