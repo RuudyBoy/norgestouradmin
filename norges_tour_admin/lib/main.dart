@@ -229,7 +229,7 @@ class AdminDashboard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const SizedBox(height: 4),
-                     Row(
+                      Row(
                         children: [
                           const Icon(Icons.map, size: 16, color: AppColors.adminTextSecondary),
                           const SizedBox(width: 4),
@@ -246,10 +246,16 @@ class AdminDashboard extends StatelessWidget {
                           
                           const SizedBox(width: 16),
                           
-                          // Datoene holder vi som de er (de er som regel korte nok)
+                          // Datoene kan også bli for lange på mobilskjermer
                           const Icon(Icons.calendar_today, size: 16, color: AppColors.adminTextSecondary),
                           const SizedBox(width: 4),
-                          Text("$start - $end"),
+                          Flexible(
+                            child: Text(
+                              "$start - $end",
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ),
                         ],
                       ),
                     ],

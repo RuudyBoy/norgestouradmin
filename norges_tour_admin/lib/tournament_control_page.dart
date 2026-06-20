@@ -1384,9 +1384,10 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Row(
                   children: [
-                    const Text("Oppdateres automatisk etter hvert som kamper spilles",
-                        style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary)),
-                    const Spacer(),
+                    Expanded(
+                      child: const Text("Oppdateres automatisk etter hvert som kamper spilles",
+                          style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary)),
+                    ),
                     TextButton.icon(
                       icon: const Icon(Icons.sync, size: 15, color: AppColors.adminOrange),
                       label: const Text("Sync", style: TextStyle(color: AppColors.adminOrange, fontSize: 12)),
