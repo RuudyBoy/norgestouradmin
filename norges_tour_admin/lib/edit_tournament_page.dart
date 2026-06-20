@@ -24,6 +24,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
 
   late int _courtsCount;
   late int _matchDurationMinutes;
+  TimeOfDay? _startTime;
   late String _selectedTypeId;
   late bool _hasDivisionPlay;
   late int _div1Size;
@@ -66,6 +67,17 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     _startDate = _parseDate(d['start_date']);
     _endDate = _parseDate(d['end_date']);
     _registrationDeadline = _parseDate(d['registration_deadline']);
+
+    final rawStartTime = d['start_time'] as String?;
+    if (rawStartTime != null) {
+      final parts = rawStartTime.split(':');
+      if (parts.length == 2) {
+        _startTime = TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? 9,
+          minute: int.tryParse(parts[1]) ?? 0,
+        );
+      }
+    }
   }
 
   @override
@@ -110,8 +122,9 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     );
     if (picked == null) return;
     setState(() {
-      if (which == 'start') _startDate = picked;
-      else if (which == 'end') _endDate = picked;
+      if (which == 'start') {
+        _startDate = picked;
+      } else if (which == 'end') _endDate = picked;
       else _registrationDeadline = picked;
     });
   }
@@ -132,6 +145,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         'image_url': _imageUrlCtrl.text.trim(),
         'courts_count': _courtsCount,
         'match_duration_minutes': _matchDurationMinutes,
+        if (_startTime != null)
+          'start_time': '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}',
         'tournament_type': _selectedTypeId,
         'tournament_type_label': _typeLabels[_selectedTypeId] ?? _selectedTypeId,
         'has_division_play': _hasDivisionPlay,
@@ -256,7 +271,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
               _section("Turneringstype"),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: _selectedTypeId,
+                initialValue: _selectedTypeId,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.category),
@@ -279,7 +294,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<int>(
-                      value: _courtsCount,
+                      initialValue: _courtsCount,
                       decoration: const InputDecoration(
                         labelText: "Antall baner",
                         border: OutlineInputBorder(),
@@ -295,7 +310,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: DropdownButtonFormField<int>(
-                      value: _matchDurationMinutes,
+                      initialValue: _matchDurationMinutes,
                       decoration: const InputDecoration(
                         labelText: "Tid per kamp",
                         border: OutlineInputBorder(),
@@ -313,19 +328,49 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                 ],
               ),
               const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: Icon(
+                  Icons.access_time,
+                  size: 16,
+                  color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                ),
+                label: Text(
+                  _startTime != null
+                      ? 'Kampstart: ${_startTime!.format(context)}'
+                      : 'Kampstart (ikke satt – tider tildeles ikke automatisk)',
+                  style: TextStyle(
+                    color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                    fontSize: 13,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(
+                    color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                  ),
+                ),
+                onPressed: () async {
+                  final t = await showTimePicker(
+                    context: context,
+                    initialTime: _startTime ?? const TimeOfDay(hour: 9, minute: 0),
+                  );
+                  if (t != null) setState(() => _startTime = t);
+                },
+              ),
+              const SizedBox(height: 12),
               SwitchListTile(
                 title: const Text("Divisjonsspill",
                     style: TextStyle(fontWeight: FontWeight.w600)),
                 subtitle: const Text("A/B/C-divisjoner basert på ranking"),
                 value: _hasDivisionPlay,
-                activeColor: Theme.of(context).colorScheme.primary,
+                activeThumbColor: Theme.of(context).colorScheme.primary,
                 contentPadding: EdgeInsets.zero,
                 onChanged: (v) => setState(() => _hasDivisionPlay = v),
               ),
               if (_hasDivisionPlay) ...[
                 const SizedBox(height: 8),
                 DropdownButtonFormField<int>(
-                  value: _div1Size,
+                  initialValue: _div1Size,
                   decoration: const InputDecoration(
                     labelText: "Lag i 1. divisjon (A)",
                     border: OutlineInputBorder(),
@@ -529,7 +574,7 @@ class _CategoryAdminDialog extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<int>(
-                value: maxTeams,
+                initialValue: maxTeams,
                 decoration: const InputDecoration(
                     labelText: "Maks lag", border: OutlineInputBorder()),
                 items: [8, 12, 16, 20, 24, 32, 40, 48, 64]
@@ -600,7 +645,7 @@ class _CategoryAdminDialog extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<int>(
-                value: maxTeams,
+                initialValue: maxTeams,
                 decoration: const InputDecoration(
                     labelText: "Maks lag", border: OutlineInputBorder()),
                 items: [8, 12, 16, 20, 24, 32, 40, 48, 64]

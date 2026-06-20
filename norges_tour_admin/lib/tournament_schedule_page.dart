@@ -68,10 +68,12 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
       return 1;
     }
     if (stage == 'playoff') {
+      if (round == 'omspill') return 9;
       if (round == 'r16') return 10;
-      if (round == 'qf') return 11;
-      if (round == 'sf') return 12;
-      if (round == 'final') return 13;
+      if (round == 'r8') return 11;
+      if (round == 'qf') return 12;
+      if (round == 'sf') return 13;
+      if (round == 'final') return 14;
     }
     return 99;
   }
@@ -89,7 +91,9 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
     }
     if (stage == 'playoff') {
       final bl = bracket.toUpperCase();
-      if (round == 'r16') return '$bl-Bracket – R16';
+      if (round == 'omspill') return '$bl-Bracket – Playoff';
+      if (round == 'r16') return '$bl-Bracket – 1/16';
+      if (round == 'r8') return '$bl-Bracket – 1/8';
       if (round == 'qf') return '$bl-Bracket – Kvartfinale';
       if (round == 'sf') return '$bl-Bracket – Semifinale';
       if (round == 'final') return '$bl-Bracket – FINALE';
@@ -424,6 +428,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
 
   Widget _buildMatchCard(DocumentSnapshot matchDoc) {
     final d = matchDoc.data() as Map<String, dynamic>;
+    final matchNum = d['match_number'] as int?;
     final court = d['court'] as String? ?? 'Bane ?';
     final teamA = d['team_a_name'] as String? ?? 'TBD';
     final teamB = d['team_b_name'] as String? ?? 'TBD';
@@ -457,8 +462,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             // Court + tag
             Row(
               children: [
+                if (matchNum != null) ...[
+                  Text('Kamp $matchNum',
+                      style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 5),
+                ],
                 Text(court,
-                    style: TextStyle(
+                    style: const TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                         color: AppColors.adminTextSecondary)),
@@ -562,13 +572,13 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
           padding: const EdgeInsets.all(12),
           children: [
             if (group.isNotEmpty) ...[
-              _sectionHeader("Puljespill", Icons.grid_view, AppColors.adminText!),
+              _sectionHeader("Puljespill", Icons.grid_view, AppColors.adminText),
               const SizedBox(height: 8),
               _buildGroupCrossings(group),
             ],
             if (playoff.isNotEmpty) ...[
               const SizedBox(height: 16),
-              _sectionHeader("Sluttspill (bracket)", Icons.account_tree, AppColors.adminOrangeHover!),
+              _sectionHeader("Sluttspill (bracket)", Icons.account_tree, AppColors.adminOrangeHover),
               const SizedBox(height: 8),
               _buildPlayoffCrossings(playoff),
             ],
@@ -651,7 +661,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             ? AppColors.adminOrange
             : bracket == 'B'
                 ? AppColors.green
-                : AppColors.adminOrange;
+                : AppColors.adminTextSecondary;
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
@@ -695,7 +705,9 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
     // Build match description
     String desc = '';
     if (isPlayoff) {
-      if (round == 'r16') desc = 'R16';
+      if (round == 'omspill') desc = 'PO';
+      if (round == 'r16') desc = '1/16';
+      if (round == 'r8') desc = '1/8';
       if (round == 'qf') desc = 'KF';
       if (round == 'sf') desc = 'SF';
       if (round == 'final') desc = 'FIN';

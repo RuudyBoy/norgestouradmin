@@ -451,7 +451,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<int>(
-                        value: _courtsCount,
+                        initialValue: _courtsCount,
                         decoration: const InputDecoration(
                           labelText: "Antall baner",
                           border: OutlineInputBorder(),
@@ -466,7 +466,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<int>(
-                        value: _matchDurationMinutes,
+                        initialValue: _matchDurationMinutes,
                         decoration: const InputDecoration(
                           labelText: "Tid per kamp",
                           border: OutlineInputBorder(),
@@ -493,14 +493,14 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     subtitle: const Text(
                         "Del lag i A/B/C-divisjoner basert på ranking"),
                     value: _hasDivisionPlay,
-                    activeColor: Theme.of(context).colorScheme.primary,
+                    activeThumbColor: Theme.of(context).colorScheme.primary,
                     contentPadding: EdgeInsets.zero,
                     onChanged: (v) => setState(() => _hasDivisionPlay = v),
                   ),
                   if (_hasDivisionPlay) ...[
                     const SizedBox(height: 8),
                     DropdownButtonFormField<int>(
-                      value: _div1Size,
+                      initialValue: _div1Size,
                       decoration: const InputDecoration(
                         labelText: "Lag i 1. divisjon (A)",
                         border: OutlineInputBorder(),

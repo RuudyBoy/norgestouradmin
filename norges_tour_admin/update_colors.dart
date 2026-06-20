@@ -57,9 +57,9 @@ void main() {
       final importIdx = content.lastIndexOf(RegExp(r"import '.*';"));
       if (importIdx != -1) {
         final endOfImport = content.indexOf('\n', importIdx);
-        content = content.substring(0, endOfImport + 1) + "import 'theme/app_colors.dart';\n" + content.substring(endOfImport + 1);
+        content = "${content.substring(0, endOfImport + 1)}import 'theme/app_colors.dart';\n${content.substring(endOfImport + 1)}";
       } else {
-        content = "import 'theme/app_colors.dart';\n" + content;
+        content = "import 'theme/app_colors.dart';\n$content";
       }
     }
     

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'theme/app_text_styles.dart';
 import 'theme/app_colors.dart';
 
@@ -24,27 +23,11 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     });
 
     try {
-      final credentials = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
-
-      // Check if user is admin
-      if (credentials.user != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('admins')
-            .doc(credentials.user!.uid)
-            .get();
-
-        if (!doc.exists) {
-          // Ikke admin
-          await FirebaseAuth.instance.signOut();
-          setState(() {
-            _errorMessage = "Du har ikke admin-tilgang. Kontakt systemansvarlig.";
-          });
-        }
-        // If doc exists, main.dart's AuthStream will pick it up and navigate
-      }
+      // AuthGate in main.dart will verify admin status and navigate
     } on FirebaseAuthException catch (e) {
       setState(() {
         _errorMessage = e.message ?? "En feil oppstod ved innlogging.";
@@ -134,7 +117,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                     margin: const EdgeInsets.only(bottom: 24),
                     decoration: BoxDecoration(
                       color: AppColors.adminOrange,
-                      border: Border.all(color: AppColors.adminOrange!),
+                      border: Border.all(color: AppColors.adminOrange),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(

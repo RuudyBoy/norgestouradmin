@@ -53,7 +53,25 @@ class AuthGate extends StatelessWidget {
           );
         }
         if (snapshot.hasData) {
-          return const AdminDashboard();
+          return FutureBuilder<DocumentSnapshot>(
+            future: FirebaseFirestore.instance
+                .collection('admins')
+                .doc(snapshot.data!.uid)
+                .get(),
+            builder: (context, adminSnapshot) {
+              if (adminSnapshot.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (adminSnapshot.hasData && adminSnapshot.data!.exists) {
+                return const AdminDashboard();
+              }
+              // Signed in but not an admin — sign out and show login
+              FirebaseAuth.instance.signOut();
+              return const AdminLoginPage();
+            },
+          );
         }
         return const AdminLoginPage();
       },

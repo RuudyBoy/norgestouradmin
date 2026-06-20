@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -422,6 +423,29 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
     await batch.commit();
     _snack("$numGroups grupper + sluttspillkryssninger generert!");
+
+    // Auto-schedule if tournament has start_time configured
+    final tourDoc = await FirebaseFirestore.instance
+        .collection('tournaments')
+        .doc(widget.tournamentId)
+        .get();
+    final td = tourDoc.data() ?? {};
+    final startTimeStr = td['start_time'] as String?;
+    if (startTimeStr != null && _selectedCategoryId != null) {
+      final parts = startTimeStr.split(':');
+      if (parts.length == 2) {
+        final startMinutes = (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts[1]) ?? 0);
+        final duration = (td['match_duration_minutes'] as num?)?.toInt() ?? 60;
+        final courts = (td['courts_count'] as num?)?.toInt() ?? 4;
+        await _autoScheduleForCategory(
+          _selectedCategoryId!,
+          startMinutes: startMinutes,
+          matchDurationMinutes: duration,
+          courtsCount: courts,
+        );
+        _snack("Kampskjema tildelt automatisk fra $startTimeStr.");
+      }
+    }
   }
 
   // Lager en pending gruppekamp med kilde-referanser
@@ -482,6 +506,13 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       '${prefix}_id': 'placeholder',
       '${prefix}_from_match_id': fromMatchId,
       '${prefix}_from_slot': 'winner',
+    };
+
+    Map<String, dynamic> loserSlot(String prefix, String fromMatchId, String label) => {
+      '${prefix}_name': label,
+      '${prefix}_id': 'placeholder',
+      '${prefix}_from_match_id': fromMatchId,
+      '${prefix}_from_slot': 'loser',
     };
 
     Map<String, dynamic> mkPlayoff({
@@ -563,117 +594,214 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           aSlot: winnerSlot('team_a', r[301]!.id), bSlot: winnerSlot('team_b', r[302]!.id)));
 
     } else if (numGroups == 8) {
-      // ─── 8-gruppe oppsett (32 lag) ─────────────────────────────────────────
-      // A-bracket: R16 → QF → SF → Finale
+      // ─── 8-gruppe oppsett (32 lag) ────────────────────────────────────────
+      // A-puljer: g[0]-g[3] (A,B,C,D – høyest seedede)
+      // B-puljer: g[4]-g[7] (E,F,G,H – lavere seedede)
+      //
+      // NVBF Masters-format (korrekt):
+      //   OMSPILL: 4.plass A-pulje vs 1.plass B-pulje
+      //     → Vinner: A-bracket 1/16
+      //     → Taper: B-bracket Kvartfinale (direkte, hopper over B 1/8)
+      //
+      //   A-BRACKET:
+      //     1/16 (r16): 3.plass A-pulje (direkte) vs Omspill-vinner
+      //     1/8  (r8) : 2.plass A-pulje (direkte) vs 1/16-vinner
+      //     1/4  (qf) : 1.plass A-pulje (direkte) vs 1/8-vinner
+      //     SF + Finale
+      //
+      //   B-BRACKET:
+      //     1/8  (r8) : 2.plass B-pulje vs 3.plass B-pulje (kryssseeding)
+      //     1/4  (qf) : Omspill-taper (direkte) vs B-1/8-vinner
+      //     SF + Finale
+      //
+      //   C-BRACKET: 4.plass B-pulje (4 lag) → SF + Finale
+
       final r = <int, DocumentReference>{
-        for (final n in [
-          101,102,103,104,105,106,107,108,109,110,111,
-          201,202,203,204,205,206,207,
-          301,302,303,304,305,306,307
-        ]) n: db.collection('matches').doc()
+        // Omspill: 1-4
+        for (final n in [1, 2, 3, 4]) n: db.collection('matches').doc(),
+        // A-bracket: r16(4) + r8(4) + qf(4) + sf(2) + final(1) = 15
+        for (final n in [101,102,103,104, 105,106,107,108, 109,110,111,112, 113,114, 115])
+          n: db.collection('matches').doc(),
+        // B-bracket: r8(4) + qf(4) + sf(2) + final(1) = 11
+        for (final n in [201,202,203,204, 205,206,207,208, 209,210, 211])
+          n: db.collection('matches').doc(),
+        // C-bracket: sf(2) + final(1) = 3
+        for (final n in [301, 302, 303])
+          n: db.collection('matches').doc(),
       };
 
-      // R16 – 4 "wild card" kamper: høyere seedede 1ere vs 2ere
+      // ── OMSPILL (4 kamper) ──────────────────────────────────────────────────
+      // Likeseeding (NVBF-standard): 4.plass indre pulje møter 1.plass korr. ytre pulje
+      // A↔E, B↔F, C↔G, D↔H
+      batch.set(r[1]!, mkPlayoff(bracket:'A', round:'omspill', num:1,
+          nextId: r[101]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[0], 4),   // 4.plass Pulje A
+          bSlot: groupSlot('team_b', g[4], 1)));  // 1.plass Pulje E
+
+      batch.set(r[2]!, mkPlayoff(bracket:'A', round:'omspill', num:2,
+          nextId: r[102]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 4),   // 4.plass Pulje B
+          bSlot: groupSlot('team_b', g[5], 1)));  // 1.plass Pulje F
+
+      batch.set(r[3]!, mkPlayoff(bracket:'A', round:'omspill', num:3,
+          nextId: r[103]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 4),   // 4.plass Pulje C
+          bSlot: groupSlot('team_b', g[6], 1)));  // 1.plass Pulje G
+
+      batch.set(r[4]!, mkPlayoff(bracket:'A', round:'omspill', num:4,
+          nextId: r[104]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 4),   // 4.plass Pulje D
+          bSlot: groupSlot('team_b', g[7], 1)));  // 1.plass Pulje H
+
+      // ── A-bracket 1/16 (3.plass A-puljer vs omspill-vinnere) ──────────────
+      // 3.plass fra pulje ikke involvert i tilsvarende omspill-kamp
       batch.set(r[101]!, mkPlayoff(bracket:'A', round:'r16', num:101,
-          nextId: r[106]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[4], 1), bSlot: groupSlot('team_b', g[3], 2)));
+          nextId: r[105]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 3),       // 3.plass Pulje C (OM1=A,E → C ok)
+          bSlot: winnerSlot('team_b', r[1]!.id)));   // Vinner omspill 1
 
       batch.set(r[102]!, mkPlayoff(bracket:'A', round:'r16', num:102,
-          nextId: r[105]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[7], 1), bSlot: groupSlot('team_b', g[0], 2)));
+          nextId: r[106]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 3),       // 3.plass Pulje D (OM2=B,F → D ok)
+          bSlot: winnerSlot('team_b', r[2]!.id)));   // Vinner omspill 2
 
       batch.set(r[103]!, mkPlayoff(bracket:'A', round:'r16', num:103,
-          nextId: r[108]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[5], 1), bSlot: groupSlot('team_b', g[2], 2)));
+          nextId: r[107]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 3),       // 3.plass Pulje B (OM3=C,G → B ok)
+          bSlot: winnerSlot('team_b', r[3]!.id)));   // Vinner omspill 3
 
       batch.set(r[104]!, mkPlayoff(bracket:'A', round:'r16', num:104,
-          nextId: r[107]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[6], 1), bSlot: groupSlot('team_b', g[1], 2)));
+          nextId: r[108]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[0], 3),       // 3.plass Pulje A (OM4=D,H → A ok)
+          bSlot: winnerSlot('team_b', r[4]!.id)));   // Vinner omspill 4
 
-      // QF
-      batch.set(r[105]!, mkPlayoff(bracket:'A', round:'qf', num:105,
-          nextId: r[109]!.id, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 1), bSlot: winnerSlot('team_b', r[102]!.id)));
-
-      batch.set(r[106]!, mkPlayoff(bracket:'A', round:'qf', num:106,
+      // ── A-bracket 1/8 (2.plass A-puljer vs 1/16-vinnere) ──────────────────
+      batch.set(r[105]!, mkPlayoff(bracket:'A', round:'r8', num:105,
           nextId: r[109]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 1), bSlot: winnerSlot('team_b', r[101]!.id)));
+          aSlot: groupSlot('team_a', g[3], 2),       // 2.plass Pulje D (kj. A,E,C → D ok)
+          bSlot: winnerSlot('team_b', r[101]!.id)));
 
-      batch.set(r[107]!, mkPlayoff(bracket:'A', round:'qf', num:107,
-          nextId: r[110]!.id, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 1), bSlot: winnerSlot('team_b', r[104]!.id)));
-
-      batch.set(r[108]!, mkPlayoff(bracket:'A', round:'qf', num:108,
+      batch.set(r[106]!, mkPlayoff(bracket:'A', round:'r8', num:106,
           nextId: r[110]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 1), bSlot: winnerSlot('team_b', r[103]!.id)));
+          aSlot: groupSlot('team_a', g[2], 2),       // 2.plass Pulje C (kj. B,F,D → C ok)
+          bSlot: winnerSlot('team_b', r[102]!.id)));
 
-      // SF
-      batch.set(r[109]!, mkPlayoff(bracket:'A', round:'sf', num:109,
-          nextId: r[111]!.id, nextSlot:'a',
-          aSlot: winnerSlot('team_a', r[105]!.id), bSlot: winnerSlot('team_b', r[106]!.id)));
-
-      batch.set(r[110]!, mkPlayoff(bracket:'A', round:'sf', num:110,
+      batch.set(r[107]!, mkPlayoff(bracket:'A', round:'r8', num:107,
           nextId: r[111]!.id, nextSlot:'b',
-          aSlot: winnerSlot('team_a', r[107]!.id), bSlot: winnerSlot('team_b', r[108]!.id)));
+          aSlot: groupSlot('team_a', g[0], 2),       // 2.plass Pulje A (kj. C,G,B → A ok)
+          bSlot: winnerSlot('team_b', r[103]!.id)));
 
-      batch.set(r[111]!, mkPlayoff(bracket:'A', round:'final', num:111,
+      batch.set(r[108]!, mkPlayoff(bracket:'A', round:'r8', num:108,
+          nextId: r[112]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[1], 2),       // 2.plass Pulje B (kj. D,H,A → B ok)
+          bSlot: winnerSlot('team_b', r[104]!.id)));
+
+      // ── A-bracket Kvartfinale (1.plass A-puljer vs 1/8-vinnere) ─────────────
+      batch.set(r[109]!, mkPlayoff(bracket:'A', round:'qf', num:109,
+          nextId: r[113]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[0], 1),       // 1.plass Pulje A
+          bSlot: winnerSlot('team_b', r[105]!.id)));
+
+      batch.set(r[110]!, mkPlayoff(bracket:'A', round:'qf', num:110,
+          nextId: r[113]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[3], 1),       // 1.plass Pulje D
+          bSlot: winnerSlot('team_b', r[106]!.id)));
+
+      batch.set(r[111]!, mkPlayoff(bracket:'A', round:'qf', num:111,
+          nextId: r[114]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[1], 1),       // 1.plass Pulje B
+          bSlot: winnerSlot('team_b', r[107]!.id)));
+
+      batch.set(r[112]!, mkPlayoff(bracket:'A', round:'qf', num:112,
+          nextId: r[114]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[2], 1),       // 1.plass Pulje C
+          bSlot: winnerSlot('team_b', r[108]!.id)));
+
+      // ── A-bracket SF + Finale ────────────────────────────────────────────────
+      batch.set(r[113]!, mkPlayoff(bracket:'A', round:'sf', num:113,
+          nextId: r[115]!.id, nextSlot:'a',
           aSlot: winnerSlot('team_a', r[109]!.id), bSlot: winnerSlot('team_b', r[110]!.id)));
 
-      // B-bracket (3. plass)
-      batch.set(r[201]!, mkPlayoff(bracket:'B', round:'qf', num:201,
-          nextId: r[205]!.id, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 3), bSlot: groupSlot('team_b', g[7], 3)));
+      batch.set(r[114]!, mkPlayoff(bracket:'A', round:'sf', num:114,
+          nextId: r[115]!.id, nextSlot:'b',
+          aSlot: winnerSlot('team_a', r[111]!.id), bSlot: winnerSlot('team_b', r[112]!.id)));
 
-      batch.set(r[202]!, mkPlayoff(bracket:'B', round:'qf', num:202,
+      batch.set(r[115]!, mkPlayoff(bracket:'A', round:'final', num:115,
+          aSlot: winnerSlot('team_a', r[113]!.id), bSlot: winnerSlot('team_b', r[114]!.id)));
+
+      // ── B-bracket 1/8 (2.plass B-puljer vs 3.plass B-puljer, kryssseeding) ──
+      // Kryssseeding slik at B-1/8-vinnere møter passende Omspill-taper i B-QF:
+      //   201: 2.F vs 3.G  → B-qf-205 (mot Omspill-1-taper: A eller E)
+      //   202: 2.E vs 3.H  → B-qf-206 (mot Omspill-2-taper: B eller F)
+      //   203: 2.H vs 3.F  → B-qf-207 (mot Omspill-3-taper: C eller G)
+      //   204: 2.G vs 3.E  → B-qf-208 (mot Omspill-4-taper: D eller H)
+      batch.set(r[201]!, mkPlayoff(bracket:'B', round:'r8', num:201,
           nextId: r[205]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 3), bSlot: groupSlot('team_b', g[4], 3)));
+          aSlot: groupSlot('team_a', g[5], 2),    // 2.plass Pulje F
+          bSlot: groupSlot('team_b', g[6], 3)));   // 3.plass Pulje G
 
-      batch.set(r[203]!, mkPlayoff(bracket:'B', round:'qf', num:203,
-          nextId: r[206]!.id, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 3), bSlot: groupSlot('team_b', g[6], 3)));
-
-      batch.set(r[204]!, mkPlayoff(bracket:'B', round:'qf', num:204,
+      batch.set(r[202]!, mkPlayoff(bracket:'B', round:'r8', num:202,
           nextId: r[206]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 3), bSlot: groupSlot('team_b', g[5], 3)));
+          aSlot: groupSlot('team_a', g[4], 2),    // 2.plass Pulje E
+          bSlot: groupSlot('team_b', g[7], 3)));   // 3.plass Pulje H
 
-      batch.set(r[205]!, mkPlayoff(bracket:'B', round:'sf', num:205,
-          nextId: r[207]!.id, nextSlot:'a',
-          aSlot: winnerSlot('team_a', r[201]!.id), bSlot: winnerSlot('team_b', r[202]!.id)));
-
-      batch.set(r[206]!, mkPlayoff(bracket:'B', round:'sf', num:206,
+      batch.set(r[203]!, mkPlayoff(bracket:'B', round:'r8', num:203,
           nextId: r[207]!.id, nextSlot:'b',
-          aSlot: winnerSlot('team_a', r[203]!.id), bSlot: winnerSlot('team_b', r[204]!.id)));
+          aSlot: groupSlot('team_a', g[7], 2),    // 2.plass Pulje H
+          bSlot: groupSlot('team_b', g[5], 3)));   // 3.plass Pulje F
 
-      batch.set(r[207]!, mkPlayoff(bracket:'B', round:'final', num:207,
+      batch.set(r[204]!, mkPlayoff(bracket:'B', round:'r8', num:204,
+          nextId: r[208]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[6], 2),    // 2.plass Pulje G
+          bSlot: groupSlot('team_b', g[4], 3)));   // 3.plass Pulje E
+
+      // ── B-bracket Kvartfinale (Omspill-tapere direkte vs B-1/8-vinnere) ─────
+      // Omspill-tapere hopper over B-1/8 og starter i B-QF
+      batch.set(r[205]!, mkPlayoff(bracket:'B', round:'qf', num:205,
+          nextId: r[209]!.id, nextSlot:'a',
+          aSlot: loserSlot('team_a', r[1]!.id, 'Taper omspill 1'),   // Taper OM1 (A/E)
+          bSlot: winnerSlot('team_b', r[201]!.id)));                   // B-1/8-201-vinner (F/G)
+
+      batch.set(r[206]!, mkPlayoff(bracket:'B', round:'qf', num:206,
+          nextId: r[209]!.id, nextSlot:'b',
+          aSlot: loserSlot('team_a', r[2]!.id, 'Taper omspill 2'),   // Taper OM2 (B/F)
+          bSlot: winnerSlot('team_b', r[202]!.id)));                   // B-1/8-202-vinner (E/H)
+
+      batch.set(r[207]!, mkPlayoff(bracket:'B', round:'qf', num:207,
+          nextId: r[210]!.id, nextSlot:'a',
+          aSlot: loserSlot('team_a', r[3]!.id, 'Taper omspill 3'),   // Taper OM3 (C/G)
+          bSlot: winnerSlot('team_b', r[203]!.id)));                   // B-1/8-203-vinner (H/F)
+
+      batch.set(r[208]!, mkPlayoff(bracket:'B', round:'qf', num:208,
+          nextId: r[210]!.id, nextSlot:'b',
+          aSlot: loserSlot('team_a', r[4]!.id, 'Taper omspill 4'),   // Taper OM4 (D/H)
+          bSlot: winnerSlot('team_b', r[204]!.id)));                   // B-1/8-204-vinner (G/E)
+
+      // ── B-bracket SF + Finale ─────────────────────────────────────────────────
+      batch.set(r[209]!, mkPlayoff(bracket:'B', round:'sf', num:209,
+          nextId: r[211]!.id, nextSlot:'a',
           aSlot: winnerSlot('team_a', r[205]!.id), bSlot: winnerSlot('team_b', r[206]!.id)));
 
-      // C-bracket (siste plass)
-      batch.set(r[301]!, mkPlayoff(bracket:'C', round:'qf', num:301,
-          nextId: r[305]!.id, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[0], 4), bSlot: groupSlot('team_b', g[7], 4)));
+      batch.set(r[210]!, mkPlayoff(bracket:'B', round:'sf', num:210,
+          nextId: r[211]!.id, nextSlot:'b',
+          aSlot: winnerSlot('team_a', r[207]!.id), bSlot: winnerSlot('team_b', r[208]!.id)));
 
-      batch.set(r[302]!, mkPlayoff(bracket:'C', round:'qf', num:302,
-          nextId: r[305]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[3], 4), bSlot: groupSlot('team_b', g[4], 4)));
+      batch.set(r[211]!, mkPlayoff(bracket:'B', round:'final', num:211,
+          aSlot: winnerSlot('team_a', r[209]!.id), bSlot: winnerSlot('team_b', r[210]!.id)));
 
-      batch.set(r[303]!, mkPlayoff(bracket:'C', round:'qf', num:303,
-          nextId: r[306]!.id, nextSlot:'a',
-          aSlot: groupSlot('team_a', g[1], 4), bSlot: groupSlot('team_b', g[6], 4)));
+      // ── C-bracket (kun 4.plass B-puljer – 4 lag → SF + Finale) ─────────────
+      batch.set(r[301]!, mkPlayoff(bracket:'C', round:'sf', num:301,
+          nextId: r[303]!.id, nextSlot:'a',
+          aSlot: groupSlot('team_a', g[4], 4),    // 4.plass Pulje E
+          bSlot: groupSlot('team_b', g[7], 4)));   // 4.plass Pulje H
 
-      batch.set(r[304]!, mkPlayoff(bracket:'C', round:'qf', num:304,
-          nextId: r[306]!.id, nextSlot:'b',
-          aSlot: groupSlot('team_a', g[2], 4), bSlot: groupSlot('team_b', g[5], 4)));
+      batch.set(r[302]!, mkPlayoff(bracket:'C', round:'sf', num:302,
+          nextId: r[303]!.id, nextSlot:'b',
+          aSlot: groupSlot('team_a', g[5], 4),    // 4.plass Pulje F
+          bSlot: groupSlot('team_b', g[6], 4)));   // 4.plass Pulje G
 
-      batch.set(r[305]!, mkPlayoff(bracket:'C', round:'sf', num:305,
-          nextId: r[307]!.id, nextSlot:'a',
+      batch.set(r[303]!, mkPlayoff(bracket:'C', round:'final', num:303,
           aSlot: winnerSlot('team_a', r[301]!.id), bSlot: winnerSlot('team_b', r[302]!.id)));
-
-      batch.set(r[306]!, mkPlayoff(bracket:'C', round:'sf', num:306,
-          nextId: r[307]!.id, nextSlot:'b',
-          aSlot: winnerSlot('team_a', r[303]!.id), bSlot: winnerSlot('team_b', r[304]!.id)));
-
-      batch.set(r[307]!, mkPlayoff(bracket:'C', round:'final', num:307,
-          aSlot: winnerSlot('team_a', r[305]!.id), bSlot: winnerSlot('team_b', r[306]!.id)));
     }
     // For andre gruppeantall: sluttspill opprettes ikke automatisk
   }
@@ -694,7 +822,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     if (allMatches.isEmpty) return;
 
     final matchById = <String, Map<String, dynamic>>{
-      for (final m in allMatches) m.id: m.data() as Map<String, dynamic>
+      for (final m in allMatches) m.id: m.data()
     };
 
     // ── Del 1: Beregn og oppdater lag-plasseringer fra ferdige R2-kamper ────
@@ -735,7 +863,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
     final teamByGroupPlace = <String, Map<String, dynamic>>{};
     for (final t in teamsSnap.docs) {
-      final d = t.data() as Map<String, dynamic>;
+      final d = t.data();
       final group = d['group'] as String?;
       final place = d['group_placement'] as int?;
       if (group != null && place != null) {
@@ -811,6 +939,89 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     if (updates > 0) await mBatch.commit();
   }
 
+  // ─── Auto-schedule helpers ────────────────────────────────────────────────
+
+  static int _matchRoundOrder(Map d) {
+    final stage = d['stage'] as String? ?? '';
+    final matchType = d['match_type'] as String? ?? '';
+    final round = d['round'] as String? ?? '';
+    if (stage == 'group') {
+      if (matchType == 'group_match_1' || matchType == 'group_match_2') return 1;
+      if (matchType == 'group_match_3' || matchType == 'group_match_4') return 2;
+      if (matchType == 'group_match_5') return 3;
+      return 1;
+    }
+    if (stage == 'playoff') {
+      if (round == 'omspill') return 9;
+      if (round == 'r16') return 10;
+      if (round == 'r8') return 11;
+      if (round == 'qf') return 12;
+      if (round == 'sf') return 13;
+      if (round == 'final') return 14;
+    }
+    return 99;
+  }
+
+  static String _fmtMinutes(int totalMinutes) {
+    final h = totalMinutes ~/ 60;
+    final m = totalMinutes % 60;
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _autoScheduleForCategory(
+    String categoryId, {
+    required int startMinutes,
+    required int matchDurationMinutes,
+    required int courtsCount,
+    int breakBetweenRounds = 5,
+  }) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('matches')
+        .where('tournament_id', isEqualTo: widget.tournamentId)
+        .where('category_id', isEqualTo: categoryId)
+        .get();
+    if (snap.docs.isEmpty) return;
+
+    final docs = List<DocumentSnapshot>.from(snap.docs)
+      ..sort((a, b) {
+        final ao = _matchRoundOrder(a.data() as Map);
+        final bo = _matchRoundOrder(b.data() as Map);
+        if (ao != bo) return ao.compareTo(bo);
+        final ag = (a.data() as Map)['group'] as String? ?? '';
+        final bg = (b.data() as Map)['group'] as String? ?? '';
+        return ag.compareTo(bg);
+      });
+
+    final Map<int, List<DocumentSnapshot>> byRound = {};
+    for (final doc in docs) {
+      final order = _matchRoundOrder(doc.data() as Map);
+      byRound.putIfAbsent(order, () => []).add(doc);
+    }
+
+    final batch = FirebaseFirestore.instance.batch();
+    int currentMinutes = startMinutes;
+
+    for (final roundOrder in (byRound.keys.toList()..sort())) {
+      final roundMatches = byRound[roundOrder]!;
+      final numSlots = (roundMatches.length / courtsCount).ceil();
+      for (int slot = 0; slot < numSlots; slot++) {
+        final slotMinutes = currentMinutes + slot * matchDurationMinutes;
+        for (int court = 0; court < courtsCount; court++) {
+          final idx = slot * courtsCount + court;
+          if (idx >= roundMatches.length) break;
+          batch.update(roundMatches[idx].reference, {
+            'court': 'Bane ${court + 1}',
+            'match_time': _fmtMinutes(slotMinutes),
+            'scheduled_minutes': slotMinutes,
+          });
+        }
+      }
+      currentMinutes += numSlots * matchDurationMinutes + breakBetweenRounds;
+    }
+
+    await batch.commit();
+  }
+
   // ─── Reset ────────────────────────────────────────────────────────────────
 
   Future<void> _resetTournament() async {
@@ -848,7 +1059,9 @@ class _TournamentControlPageState extends State<TournamentControlPage>
         .get();
 
     final batch = FirebaseFirestore.instance.batch();
-    for (final m in matchSnap.docs) batch.delete(m.reference);
+    for (final m in matchSnap.docs) {
+      batch.delete(m.reference);
+    }
     for (final t in teamSnap.docs) {
       batch.update(t.reference, {
         'group': FieldValue.delete(),
@@ -1053,7 +1266,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             if (allGroups.isNotEmpty) ...[
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: selectedGroup != null && allGroups.contains(selectedGroup) ? selectedGroup : null,
+                initialValue: selectedGroup != null && allGroups.contains(selectedGroup) ? selectedGroup : null,
                 decoration: const InputDecoration(labelText: "Flytt til pulje", border: OutlineInputBorder()),
                 items: [
                   const DropdownMenuItem(value: null, child: Text("Ingen pulje")),
@@ -1073,7 +1286,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 if (seed != null) 'seed': seed,
               };
               if (selectedGroup != currentGroup) {
-                updates['group'] = selectedGroup == null ? FieldValue.delete() : selectedGroup;
+                updates['group'] = selectedGroup ?? FieldValue.delete();
               }
               await teamDoc.reference.update(updates);
               if (ctx.mounted) { Navigator.pop(ctx); _snack("Lag oppdatert."); }
@@ -1086,6 +1299,21 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   }
 
   // ─── Sluttspill – visual bracket ──────────────────────────────────────────
+
+  String _resolveTeamDisplayName(Map<String, dynamic> d, String prefix, Map<String, int> matchNumById) {
+    final id = d['${prefix}_id'] as String? ?? '';
+    final name = d['${prefix}_name'] as String? ?? 'TBD';
+    if (id != 'placeholder') return name;
+    final fromMatchId = d['${prefix}_from_match_id'] as String?;
+    final fromSlot = d['${prefix}_from_slot'] as String?;
+    if (fromMatchId != null && fromSlot != null) {
+      final num = matchNumById[fromMatchId];
+      if (num != null) {
+        return fromSlot == 'winner' ? 'Vinner kamp $num' : 'Taper kamp $num';
+      }
+    }
+    return name;
+  }
 
   Widget _buildPlayoffsTab() {
     if (_selectedCategoryId == null) {
@@ -1125,12 +1353,26 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           );
         }
 
+        const bracketOrder = ['A', 'B', 'C', 'D'];
         final brackets = matches
             .map((m) => (m.data() as Map)['bracket'] as String?)
             .whereType<String>()
             .toSet()
             .toList()
-          ..sort();
+          ..sort((a, b) {
+            final ai = bracketOrder.indexOf(a);
+            final bi = bracketOrder.indexOf(b);
+            if (ai < 0 && bi < 0) return a.compareTo(b);
+            if (ai < 0) return 1;
+            if (bi < 0) return -1;
+            return ai.compareTo(bi);
+          });
+
+        final matchNumById = <String, int>{};
+        for (final m in matches) {
+          final num = (m.data() as Map)['match_number'] as int?;
+          if (num != null) matchNumById[m.id] = num;
+        }
 
         return DefaultTabController(
           length: brackets.isEmpty ? 1 : brackets.length,
@@ -1179,7 +1421,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     final bMatches = matches
                         .where((m) => (m.data() as Map)['bracket'] == b)
                         .toList();
-                    return _buildVisualBracket(b, bMatches);
+                    return _buildVisualBracket(b, bMatches, matchNumById);
                   }).toList(),
                 ),
               ),
@@ -1190,16 +1432,17 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  Widget _buildVisualBracket(String bracket, List<DocumentSnapshot> matches) {
+  Widget _buildVisualBracket(String bracket, List<DocumentSnapshot> matches, Map<String, int> matchNumById) {
     if (matches.isEmpty) {
       return const Center(child: Text("Ingen kamper.", style: TextStyle(color: AppColors.adminTextSecondary)));
     }
 
-    const double cardW = 200.0;
-    const double cardH = 68.0;
-    const double colGap = 44.0;
-    const double cardGap = 16.0;
-    const double headerH = 28.0;
+    const double cardW = 210.0;
+    const double cardH = 92.0;
+    const double colGap = 14.0;   // horizontal gap between sibling cards
+    const double rowGap = 36.0;   // vertical gap between rounds
+    const double pad    = 16.0;
+    const double labelH = 24.0;   // height of round label above each row
 
     final Map<String, List<DocumentSnapshot>> byRound = {};
     for (final m in matches) {
@@ -1212,39 +1455,42 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               .compareTo((b.data() as Map)['match_number'] as int? ?? 0));
     }
 
-    const roundOrder = ['r16', 'qf', 'sf', 'final'];
-    final allRounds = roundOrder.where((r) => byRound.containsKey(r)).toList();
-    if (allRounds.isEmpty) return const SizedBox.shrink();
+    // Rounds from earliest to latest (r16 → final)
+    const orderList = ['omspill', 'r16', 'r8', 'qf', 'sf', 'final'];
+    final bottomToTop = orderList.where((r) => byRound.containsKey(r)).toList();
+    if (bottomToTop.isEmpty) return const SizedBox.shrink();
 
-    final firstCount = byRound[allRounds.first]!.length;
-    final unitH = cardH + cardGap;
-    final bracketH = firstCount * unitH - cardGap;
+    // Display order: final at row 0 (top), earliest round at last row (bottom)
+    final topToBottom = bottomToTop.reversed.toList();
 
-    double centerY(int ri, int mi) {
-      final sp = 1 << ri;
-      return (mi * sp + sp * 0.5) * unitH - cardGap * 0.5;
-    }
+    // Widest round determines total width
+    final M = byRound.values.map((l) => l.length).reduce(max);
+    final innerW = M * cardW + (M - 1) * colGap;
+    final totalW = innerW + 2 * pad;
+    final totalH = pad + topToBottom.length * (labelH + cardH) +
+        (topToBottom.length - 1) * rowGap + pad;
 
+    // Position each card (top-left corner)
     final Map<int, Offset> pos = {};
-    for (int ri = 0; ri < allRounds.length; ri++) {
-      for (int mi = 0; mi < byRound[allRounds[ri]]!.length; mi++) {
-        final num = (byRound[allRounds[ri]]![mi].data() as Map)['match_number'] as int? ?? 0;
-        pos[num] = Offset(
-          ri * (cardW + colGap),
-          headerH + centerY(ri, mi) - cardH * 0.5,
-        );
+    for (int ri = 0; ri < topToBottom.length; ri++) {
+      final round = topToBottom[ri];
+      final n = byRound[round]!.length;
+      final slotW = innerW / n;
+      for (int mi = 0; mi < n; mi++) {
+        final cx = pad + (mi + 0.5) * slotW - cardW / 2;
+        final cy = pad + ri * (labelH + cardH + rowGap) + labelH;
+        final num = (byRound[round]![mi].data() as Map)['match_number'] as int? ?? 0;
+        pos[num] = Offset(cx, cy);
       }
     }
 
-    final totalW = allRounds.length * cardW + (allRounds.length - 1) * colGap + 16;
-    final totalH = headerH + bracketH + 24;
-
     const roundLabels = {
-      'r16': 'R16', 'qf': 'KVARTFINALE', 'sf': 'SEMIFINALE', 'final': 'FINALE'
+      'omspill': 'PLAYOFF', 'r16': '1/16', 'r8': '1/8',
+      'qf': 'KVARTFINALE', 'sf': 'SEMIFINALE', 'final': 'FINALE',
     };
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(8),
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
         scrollDirection: Axis.vertical,
@@ -1253,30 +1499,31 @@ class _TournamentControlPageState extends State<TournamentControlPage>
           height: totalH,
           child: Stack(
             children: [
+              // Connector lines
               Positioned.fill(
                 child: CustomPaint(
-                  painter: _BracketPainter(
-                    pos: pos,
-                    byRound: byRound,
-                    allRounds: allRounds,
-                    cardW: cardW,
-                    cardH: cardH,
-                    colGap: colGap,
+                  painter: _BracketPainterTopDown(
+                    pos: pos, byRound: byRound, topToBottom: topToBottom,
+                    cardW: cardW, cardH: cardH, innerW: innerW,
+                    pad: pad, labelH: labelH, rowGap: rowGap,
                   ),
                 ),
               ),
-              for (int ri = 0; ri < allRounds.length; ri++)
+              // Round labels (above each row, centered)
+              for (int ri = 0; ri < topToBottom.length; ri++)
                 Positioned(
-                  left: ri * (cardW + colGap),
-                  top: 0, width: cardW, height: headerH,
+                  left: 0, right: 0,
+                  top: pad + ri * (labelH + cardH + rowGap),
+                  height: labelH,
                   child: Center(
                     child: Text(
-                      roundLabels[allRounds[ri]] ?? allRounds[ri].toUpperCase(),
+                      roundLabels[topToBottom[ri]] ?? topToBottom[ri].toUpperCase(),
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10,
                           color: AppColors.adminOrange, letterSpacing: 0.8),
                     ),
                   ),
                 ),
+              // Match cards
               for (final m in matches)
                 Builder(builder: (_) {
                   final d = m.data() as Map<String, dynamic>;
@@ -1287,7 +1534,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     left: p.dx, top: p.dy, width: cardW, height: cardH,
                     child: GestureDetector(
                       onTap: () => _showMatchEditDialog(m),
-                      child: _bracketCard(d),
+                      child: _bracketCard(d, matchNumById),
                     ),
                   );
                 }),
@@ -1298,7 +1545,9 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  Widget _bracketCard(Map<String, dynamic> d) {
+  Widget _bracketCard(Map<String, dynamic> d, Map<String, int> matchNumById) {
+    final num = d['match_number'] as int?;
+    final matchTime = d['match_time'] as String?;
     final status = d['status'] as String? ?? 'pending';
     final isFinished = status == 'finished';
     final isAPH = (d['team_a_id'] as String? ?? '') == 'placeholder';
@@ -1309,31 +1558,38 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     final homeWins = isFinished && homeScore > awayScore;
     final awayWins = isFinished && awayScore > homeScore;
 
-    Widget row(String name, bool wins, int score, bool isPH) => Container(
-      height: 28,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      color: wins ? AppColors.green.withOpacity(0.12) : Colors.transparent,
-      child: Row(children: [
-        Expanded(
-          child: Text(
-            name.isEmpty ? 'TBD' : name,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: wins ? FontWeight.bold : FontWeight.normal,
-              color: isPH ? AppColors.adminTextSecondary
-                  : (wins ? AppColors.green : AppColors.adminText),
-              fontStyle: isPH ? FontStyle.italic : FontStyle.normal,
+    Widget teamRow(String name, bool wins, int score, bool isPH) => Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        color: wins ? AppColors.green.withOpacity(0.12) : Colors.transparent,
+        child: Row(children: [
+          Expanded(
+            child: Text(
+              name.isEmpty ? 'TBD' : name,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: wins ? FontWeight.bold : FontWeight.normal,
+                color: isPH ? AppColors.adminTextSecondary
+                    : (wins ? AppColors.green : AppColors.adminText),
+                fontStyle: isPH ? FontStyle.italic : FontStyle.normal,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
-            overflow: TextOverflow.ellipsis,
           ),
-        ),
-        if (isFinished)
-          Text('$score', style: TextStyle(
-            fontSize: 12, fontWeight: FontWeight.bold,
-            color: wins ? AppColors.green : AppColors.adminTextSecondary,
-          )),
-      ]),
+          if (isFinished)
+            Text('$score', style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.bold,
+              color: wins ? AppColors.green : AppColors.adminTextSecondary,
+            )),
+        ]),
+      ),
     );
+
+    final statusText = isPending ? 'Venter...' : (isFinished ? 'Ferdig' : 'Planlagt');
+    final statusColor = isFinished ? AppColors.green
+        : isPending ? AppColors.adminTextSecondary
+        : AppColors.adminOrange;
 
     return Container(
       decoration: BoxDecoration(
@@ -1350,24 +1606,45 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            row(d['team_a_name'] as String? ?? 'TBD', homeWins, homeScore, isAPH),
-            Container(height: 1, color: AppColors.adminSurfaceElevated),
-            row(d['team_b_name'] as String? ?? 'TBD', awayWins, awayScore, isBPH),
+            // Header: match number + time
             Container(
-              height: 12,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              color: AppColors.adminSurfaceElevated,
+              child: Row(
+                children: [
+                  Text(
+                    num != null ? 'Kamp $num' : '–',
+                    style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  if (isFinished)
+                    Text('$homeScore – $awayScore',
+                        style: const TextStyle(fontSize: 9, color: AppColors.green, fontWeight: FontWeight.bold))
+                  else if (matchTime != null)
+                    Row(children: [
+                      const Icon(Icons.access_time, size: 8, color: AppColors.adminTextSecondary),
+                      const SizedBox(width: 2),
+                      Text(matchTime, style: const TextStyle(fontSize: 9, color: AppColors.adminTextSecondary)),
+                    ])
+                  else
+                    Text(isPending ? 'Venter...' : '–',
+                        style: TextStyle(fontSize: 9, color: statusColor)),
+                ],
+              ),
+            ),
+            Container(height: 1, color: AppColors.adminSurfaceElevated),
+            teamRow(_resolveTeamDisplayName(d, 'team_a', matchNumById), homeWins, homeScore, isAPH),
+            Container(height: 1, color: AppColors.adminSurfaceElevated),
+            teamRow(_resolveTeamDisplayName(d, 'team_b', matchNumById), awayWins, awayScore, isBPH),
+            Container(height: 1, color: AppColors.adminSurfaceElevated),
+            Container(
               color: AppColors.adminSurfaceElevated,
               alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(vertical: 2),
               child: Text(
-                isFinished ? '$homeScore – $awayScore'
-                    : (d['match_time'] as String? ?? (isPending ? 'Venter...' : 'Planlagt')),
-                style: TextStyle(
-                  fontSize: 8,
-                  color: isFinished ? AppColors.green
-                      : isPending ? AppColors.adminTextSecondary
-                      : AppColors.adminOrange,
-                ),
+                statusText,
+                style: TextStyle(fontSize: 9, color: statusColor, fontWeight: FontWeight.w500),
               ),
             ),
           ],
@@ -1440,6 +1717,12 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             return ac.compareTo(bc);
           });
 
+        final matchNumById = <String, int>{};
+        for (final m in allMatches) {
+          final num = (m.data() as Map)['match_number'] as int?;
+          if (num != null) matchNumById[m.id] = num;
+        }
+
         final Map<String, List<DocumentSnapshot>> byDate = {};
         for (final m in sorted) {
           final date = (m.data() as Map)['match_date'] as String? ?? 'Kampdag';
@@ -1483,7 +1766,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 itemCount: sortedDates.length,
                 itemBuilder: (ctx, i) =>
-                    _buildDaySection(sortedDates[i], byDate[sortedDates[i]]!),
+                    _buildDaySection(sortedDates[i], byDate[sortedDates[i]]!, matchNumById),
               ),
             ),
           ],
@@ -1492,7 +1775,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  Widget _buildDaySection(String date, List<DocumentSnapshot> matches) {
+  Widget _buildDaySection(String date, List<DocumentSnapshot> matches, Map<String, int> matchNumById) {
     final Map<String, List<DocumentSnapshot>> byTime = {};
     for (final m in matches) {
       final time = (m.data() as Map)['match_time'] as String? ?? '--:--';
@@ -1542,7 +1825,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Wrap(
                 spacing: 8, runSpacing: 8,
-                children: byTime[time]!.map(_buildScheduleCard).toList(),
+                children: byTime[time]!.map((m) => _buildScheduleCard(m, matchNumById)).toList(),
               ),
             ),
           ],
@@ -1552,8 +1835,9 @@ class _TournamentControlPageState extends State<TournamentControlPage>
     );
   }
 
-  Widget _buildScheduleCard(DocumentSnapshot matchDoc) {
+  Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById) {
     final d = matchDoc.data() as Map<String, dynamic>;
+    final matchNum = matchNumById[matchDoc.id] ?? (d['match_number'] as int?);
     final stage = d['stage'] as String? ?? '';
     final group = d['group'] as String?;
     final bracket = d['bracket'] as String?;
@@ -1577,8 +1861,8 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       stageLabel = '$bl-Bracket $rl';
     }
 
-    final teamA = d['team_a_name'] as String? ?? 'TBD';
-    final teamB = d['team_b_name'] as String? ?? 'TBD';
+    final teamA = _resolveTeamDisplayName(d, 'team_a', matchNumById);
+    final teamB = _resolveTeamDisplayName(d, 'team_b', matchNumById);
     final homeScore = d['home_score'] as int? ?? 0;
     final awayScore = d['away_score'] as int? ?? 0;
     final homeWins = isFinished && homeScore > awayScore;
@@ -1630,6 +1914,11 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 7, 10, 5),
               child: Row(children: [
+                if (matchNum != null) ...[
+                  Text('K$matchNum',
+                      style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 5),
+                ],
                 Expanded(
                   child: Text(stageLabel,
                       style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary, fontWeight: FontWeight.w600),
@@ -1859,9 +2148,11 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             builder: (ctx, snap) {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
               final teams = snap.data!.docs;
-              if (teams.isEmpty) return const Center(
+              if (teams.isEmpty) {
+                return const Center(
                   child: Text("Ingen lag registrert enda.\nTrykk + for å legge til lag.",
                       textAlign: TextAlign.center));
+              }
 
               final sorted = List<DocumentSnapshot>.from(teams)
                 ..sort((a, b) {
@@ -2023,11 +2314,41 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                     return ta.compareTo(tb);
                   });
 
+                // ── Beregn V/P/T fra ferdige kamper ──────────────────────────
+                final statsMap = <String, Map<String, int>>{};
+                for (final m in groupMatches) {
+                  final md = m.data() as Map;
+                  if (md['status'] != 'finished') continue;
+                  final aId = md['team_a_id'] as String? ?? '';
+                  final bId = md['team_b_id'] as String? ?? '';
+                  if (aId.isEmpty || aId == 'placeholder') continue;
+                  if (bId.isEmpty || bId == 'placeholder') continue;
+                  final aSets = md['home_score'] as int? ?? 0;
+                  final bSets = md['away_score'] as int? ?? 0;
+                  statsMap.putIfAbsent(aId, () => {'v': 0, 'p': 0, 't': 0});
+                  statsMap.putIfAbsent(bId, () => {'v': 0, 'p': 0, 't': 0});
+                  statsMap[aId]!['p'] = statsMap[aId]!['p']! + aSets;
+                  statsMap[bId]!['p'] = statsMap[bId]!['p']! + bSets;
+                  if (aSets > bSets) {
+                    statsMap[aId]!['v'] = statsMap[aId]!['v']! + 1;
+                    statsMap[bId]!['t'] = statsMap[bId]!['t']! + 1;
+                  } else {
+                    statsMap[bId]!['v'] = statsMap[bId]!['v']! + 1;
+                    statsMap[aId]!['t'] = statsMap[aId]!['t']! + 1;
+                  }
+                }
+
+                final placeBg = [
+                  Colors.amber[700]!, AppColors.adminTextSecondary,
+                  Colors.brown[400]!, AppColors.adminSurfaceElevated,
+                ];
+
                 return Card(
                   margin: const EdgeInsets.only(bottom: 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // ── Header ────────────────────────────────────────────
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                         decoration: const BoxDecoration(
@@ -2038,33 +2359,72 @@ class _TournamentControlPageState extends State<TournamentControlPage>
                             style: const TextStyle(color: AppColors.adminText,
                                 fontWeight: FontWeight.bold, fontSize: 16)),
                       ),
+
+                      // ── Stillingstabell header ────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                        child: Row(children: [
+                          const SizedBox(width: 32),
+                          const SizedBox(width: 8),
+                          const Expanded(child: Text("LAG",
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
+                                  color: AppColors.adminTextSecondary, letterSpacing: 0.5))),
+                          _statHeader("V"),
+                          _statHeader("P"),
+                          _statHeader("T"),
+                        ]),
+                      ),
+                      const Divider(height: 1, indent: 12, endIndent: 12),
+
+                      // ── Lagrekke per lag ──────────────────────────────────
                       ...groupTeams.asMap().entries.map((e) {
                         final idx = e.key;
-                        final d = e.value.data() as Map<String, dynamic>;
+                        final teamDoc = e.value;
+                        final d = teamDoc.data() as Map<String, dynamic>;
                         final placement = d['group_placement'] as int?;
-                        final seed = d['seed'] as int?;
-                        final placeBgColors = [
-                          Colors.amber[700]!, AppColors.adminTextSecondary,
-                          Colors.brown[400]!, AppColors.adminTextSecondary
-                        ];
-                        return ListTile(
-                          dense: true,
-                          leading: CircleAvatar(
-                            radius: 14,
-                            backgroundColor: placement != null && placement <= 4
-                                ? placeBgColors[placement - 1]
-                                : AppColors.adminSurfaceElevated,
-                            child: Text(
-                              placement?.toString() ?? (idx + 1).toString(),
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        final rank = placement ?? (idx + 1);
+                        final rankBg = (rank >= 1 && rank <= 4)
+                            ? placeBg[rank - 1] : AppColors.adminSurfaceElevated;
+                        final st = statsMap[teamDoc.id];
+                        final v = st?['v'] ?? 0;
+                        final p = st?['p'] ?? 0;
+                        final t = st?['t'] ?? 0;
+                        final hasStats = statsMap.containsKey(teamDoc.id);
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                          child: Row(children: [
+                            CircleAvatar(
+                              radius: 14,
+                              backgroundColor: rankBg,
+                              child: Text('$rank',
+                                  style: const TextStyle(fontSize: 11,
+                                      fontWeight: FontWeight.bold, color: Colors.white)),
                             ),
-                          ),
-                          title: Text(d['team_name'] ?? 'Ukjent',
-                              style: const TextStyle(fontWeight: FontWeight.w600)),
-                          subtitle: Text("Seed $seed • ${d['player1_name'] ?? ''} & ${d['player2_name'] ?? ''}",
-                              style: const TextStyle(fontSize: 11)),
+                            const SizedBox(width: 8),
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(d['team_name'] ?? 'Ukjent',
+                                    style: const TextStyle(fontWeight: FontWeight.w600,
+                                        fontSize: 13, color: AppColors.adminText),
+                                    overflow: TextOverflow.ellipsis),
+                                Text(
+                                  "${d['player1_name'] ?? ''} & ${d['player2_name'] ?? ''}",
+                                  style: const TextStyle(fontSize: 10,
+                                      color: AppColors.adminTextSecondary),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            )),
+                            _statCell(hasStats ? '$v' : '–',
+                                bold: hasStats && v > 0, color: hasStats && v > 0 ? AppColors.green : null),
+                            _statCell(hasStats ? '$p' : '–'),
+                            _statCell(hasStats ? '$t' : '–',
+                                color: hasStats && t > 0 ? AppColors.adminTextSecondary : null),
+                          ]),
                         );
                       }),
+
                       const Divider(height: 1),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
@@ -2091,6 +2451,24 @@ class _TournamentControlPageState extends State<TournamentControlPage>
       },
     );
   }
+
+  Widget _statHeader(String label) => SizedBox(
+    width: 32,
+    child: Center(
+      child: Text(label,
+          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
+              color: AppColors.adminTextSecondary, letterSpacing: 0.5)),
+    ),
+  );
+
+  Widget _statCell(String value, {bool bold = false, Color? color}) => SizedBox(
+    width: 32,
+    child: Center(
+      child: Text(value,
+          style: TextStyle(fontSize: 13, fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: color ?? AppColors.adminText)),
+    ),
+  );
 
   Widget _buildMatchRow(DocumentSnapshot matchDoc) {
     final d = matchDoc.data() as Map<String, dynamic>;
@@ -2188,58 +2566,86 @@ class _TournamentControlPageState extends State<TournamentControlPage>
 
 // ─── Bracket line painter ──────────────────────────────────────────────────
 
-class _BracketPainter extends CustomPainter {
+class _BracketPainterTopDown extends CustomPainter {
   final Map<int, Offset> pos;
   final Map<String, List<DocumentSnapshot>> byRound;
-  final List<String> allRounds;
-  final double cardW, cardH, colGap;
+  final List<String> topToBottom; // final at index 0, earliest round at last index
+  final double cardW, cardH, innerW, pad, labelH, rowGap;
 
-  const _BracketPainter({
+  const _BracketPainterTopDown({
     required this.pos,
     required this.byRound,
-    required this.allRounds,
+    required this.topToBottom,
     required this.cardW,
     required this.cardH,
-    required this.colGap,
+    required this.innerW,
+    required this.pad,
+    required this.labelH,
+    required this.rowGap,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    final linePaint = Paint()
       ..color = const Color(0xFF1E2E54)
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
 
-    for (int ri = 0; ri < allRounds.length - 1; ri++) {
-      final curMs  = byRound[allRounds[ri]]!;
-      final nextMs = byRound[allRounds[ri + 1]]!;
-      final midXOffset = cardW + colGap / 2;
+    for (int ri = 0; ri < topToBottom.length - 1; ri++) {
+      final parentMs = byRound[topToBottom[ri]]!;
+      final childMs  = byRound[topToBottom[ri + 1]]!;
+      final np = parentMs.length;
+      final nc = childMs.length;
 
-      for (int mi = 0; mi < curMs.length; mi += 2) {
-        final n1 = (curMs[mi].data() as Map)['match_number'] as int? ?? 0;
-        final p1 = pos[n1];
-        if (p1 == null) continue;
-        final cy1 = p1.dy + cardH / 2;
-        final midX = p1.dx + midXOffset;
+      if (np == nc) {
+        // 1:1 — same count (bye round): straight vertical line child→parent
+        for (int mi = 0; mi < np; mi++) {
+          final pNum = (parentMs[mi].data() as Map)['match_number'] as int? ?? 0;
+          final cNum = (childMs[mi].data() as Map)['match_number'] as int? ?? 0;
+          final pp = pos[pNum];
+          final cp = pos[cNum];
+          if (pp == null || cp == null) continue;
+          canvas.drawLine(
+            Offset(pp.dx + cardW / 2, pp.dy + cardH),
+            Offset(cp.dx + cardW / 2, cp.dy),
+            linePaint,
+          );
+        }
+      } else {
+        // 1:2 — each parent branches to two children
+        for (int mi = 0; mi < np; mi++) {
+          final pNum = (parentMs[mi].data() as Map)['match_number'] as int? ?? 0;
+          final pp = pos[pNum];
+          if (pp == null) continue;
+          final pCX   = pp.dx + cardW / 2;
+          final pBotY = pp.dy + cardH;
 
-        canvas.drawLine(Offset(p1.dx + cardW, cy1), Offset(midX, cy1), paint);
+          final ci1 = mi * 2;
+          final ci2 = mi * 2 + 1;
+          if (ci1 >= nc) continue;
 
-        if (mi + 1 < curMs.length) {
-          final n2 = (curMs[mi + 1].data() as Map)['match_number'] as int? ?? 0;
-          final p2 = pos[n2];
-          if (p2 == null) continue;
-          final cy2 = p2.dy + cardH / 2;
+          final c1Num = (childMs[ci1].data() as Map)['match_number'] as int? ?? 0;
+          final c1p   = pos[c1Num];
+          if (c1p == null) continue;
+          final c1CX   = c1p.dx + cardW / 2;
+          final c1TopY = c1p.dy;
+          final midY = (pBotY + c1TopY) / 2;
 
-          canvas.drawLine(Offset(p2.dx + cardW, cy2), Offset(midX, cy2), paint);
-          canvas.drawLine(Offset(midX, cy1), Offset(midX, cy2), paint);
+          // trunk from parent bottom to midY
+          canvas.drawLine(Offset(pCX, pBotY), Offset(pCX, midY), linePaint);
 
-          final nextIdx = mi ~/ 2;
-          if (nextIdx < nextMs.length) {
-            final nN = (nextMs[nextIdx].data() as Map)['match_number'] as int? ?? 0;
-            final pN = pos[nN];
-            if (pN != null) {
-              final cyN = pN.dy + cardH / 2;
-              canvas.drawLine(Offset(midX, cyN), Offset(pN.dx, cyN), paint);
+          // left child branch
+          canvas.drawLine(Offset(pCX, midY), Offset(c1CX, midY), linePaint);
+          canvas.drawLine(Offset(c1CX, midY), Offset(c1CX, c1TopY), linePaint);
+
+          // right child branch
+          if (ci2 < nc) {
+            final c2Num = (childMs[ci2].data() as Map)['match_number'] as int? ?? 0;
+            final c2p   = pos[c2Num];
+            if (c2p != null) {
+              final c2CX = c2p.dx + cardW / 2;
+              canvas.drawLine(Offset(pCX, midY), Offset(c2CX, midY), linePaint);
+              canvas.drawLine(Offset(c2CX, midY), Offset(c2CX, c2p.dy), linePaint);
             }
           }
         }

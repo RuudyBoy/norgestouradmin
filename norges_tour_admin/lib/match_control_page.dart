@@ -23,15 +23,18 @@ class _MatchControlPageState extends State<MatchControlPage> {
   void _updateScore(bool isHomeTeam, int delta) async {
     final docRef = FirebaseFirestore.instance.collection('matches').doc(widget.matchId);
     final doc = await docRef.get();
-    final data = doc.data() as Map<String, dynamic>?;
+    final data = doc.data();
     if (data == null) return;
     
     int hScore = data['home_score'] ?? 0;
     int aScore = data['away_score'] ?? 0;
     int currentSet = data['current_set'] ?? 1;
     
-    if (isHomeTeam) hScore += delta;
-    else aScore += delta;
+    if (isHomeTeam) {
+      hScore += delta;
+    } else {
+      aScore += delta;
+    }
     
     if (hScore < 0) hScore = 0;
     if (aScore < 0) aScore = 0;
@@ -88,7 +91,11 @@ class _MatchControlPageState extends State<MatchControlPage> {
     int currentSet = data['current_set'] ?? 1;
     List<dynamic> pastSets = List.from(data['past_sets'] ?? []);
     
-    if (hScore > aScore) hSets++; else aSets++;
+    if (hScore > aScore) {
+      hSets++;
+    } else {
+      aSets++;
+    }
     pastSets.add({"home": hScore, "away": aScore});
     
     if (hSets == 2 || aSets == 2) {
@@ -128,7 +135,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
         .collection('matches')
         .doc(widget.matchId)
         .get();
-    final data = doc.data() as Map<String, dynamic>?;
+    final data = doc.data();
     if (data == null) return;
 
     final stage = data['stage'] as String?;
@@ -209,7 +216,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
 
   void _showEditInfoDialog(BuildContext context) async {
     final doc = await FirebaseFirestore.instance.collection('matches').doc(widget.matchId).get();
-    final data = doc.data() as Map<String, dynamic>?;
+    final data = doc.data();
     
     final timeController = TextEditingController(text: data?['start_time'] ?? '');
     final typeController = TextEditingController(text: data?['group'] ?? '');
