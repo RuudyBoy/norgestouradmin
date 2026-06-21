@@ -23,9 +23,8 @@ class TournamentControlPage extends StatefulWidget {
   State<TournamentControlPage> createState() => _TournamentControlPageState();
 }
 
-class _TournamentControlPageState extends State<TournamentControlPage>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _TournamentControlPageState extends State<TournamentControlPage> {
+  int? _activeSectionIndex;
   String? _selectedCategoryId;
 
   // Lytter på Firestore – oppdager når livescore-appen registrerer resultater
@@ -36,13 +35,6 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() {
-      setState(() {});
-      if (_tabController.index == 2 && !_tabController.indexIsChanging) {
-        _resolvePendingMatches();
-      }
-    });
     _setupFinishedMatchListener();
   }
 
@@ -78,7 +70,6 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   @override
   void dispose() {
     _finishedMatchListener?.cancel();
-    _tabController.dispose();
     super.dispose();
   }
 
@@ -1971,7 +1962,19 @@ class _TournamentControlPageState extends State<TournamentControlPage>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Admin: ${widget.tournamentName}"),
+        leading: _activeSectionIndex != null
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  setState(() {
+                    _activeSectionIndex = null;
+                  });
+                },
+              )
+            : null,
+        title: Text(_activeSectionIndex == null 
+            ? "Admin: ${widget.tournamentName}" 
+            : _getSectionTitle()),
         actions: [
           IconButton(
             icon: const Icon(Icons.how_to_reg),
@@ -1990,7 +1993,7 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             onPressed: () async {
               final doc = await FirebaseFirestore.instance
                   .collection('tournaments').doc(widget.tournamentId).get();
-              if (!mounted) return;
+              if (!context.mounted) return;
               Navigator.push(context, MaterialPageRoute(
                 builder: (_) => EditTournamentPage(
                   tournamentId: widget.tournamentId,
@@ -2029,36 +2032,16 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             ],
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: AppColors.adminText,
-          labelColor: AppColors.adminText,
-          unselectedLabelColor: AppColors.adminTextSecondary,
-          tabs: const [
-            Tab(icon: Icon(Icons.groups), text: "Lag"),
-            Tab(icon: Icon(Icons.grid_view), text: "Grupper"),
-            Tab(icon: Icon(Icons.emoji_events), text: "Sluttspill"),
-            Tab(icon: Icon(Icons.schedule), text: "Program"),
-          ],
-        ),
       ),
-      body: Column(
-        children: [
-          _buildCategorySelector(),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
+      body: _activeSectionIndex == null
+          ? _buildMenuGrid()
+          : Column(
               children: [
-                _buildTeamsTab(),
-                _buildGroupsTab(),
-                _buildPlayoffsTab(),
-                _buildScheduleTab(),
+                _buildCategorySelector(),
+                Expanded(child: _buildActiveSection()),
               ],
             ),
-          ),
-        ],
-      ),
-      floatingActionButton: _tabController.index == 0
+      floatingActionButton: _activeSectionIndex == 0
           ? FloatingActionButton.extended(
               onPressed: _showAddTeamDialog,
               label: const Text("Nytt Lag"),
@@ -2066,6 +2049,100 @@ class _TournamentControlPageState extends State<TournamentControlPage>
             )
           : null,
     );
+  }
+
+  String _getSectionTitle() {
+    switch (_activeSectionIndex) {
+      case 0: return "Påmeldte lag";
+      case 1: return "Kamper & Program";
+      case 2: return "Turnerings-oppsett";
+      default: return "";
+    }
+  }
+
+  Widget _buildMenuGrid() {
+    return GridView.count(
+      crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
+      padding: const EdgeInsets.all(20),
+      crossAxisSpacing: 16,
+      mainAxisSpacing: 16,
+      children: [
+        _MenuCard(
+          title: "Påmeldte lag",
+          icon: Icons.groups,
+          color: Colors.blue,
+          onTap: () => setState(() => _activeSectionIndex = 0),
+        ),
+        _MenuCard(
+          title: "Kamper & Program",
+          icon: Icons.sports_volleyball,
+          color: Colors.green,
+          onTap: () => setState(() => _activeSectionIndex = 1),
+        ),
+        _MenuCard(
+          title: "Turnerings-oppsett",
+          icon: Icons.account_tree,
+          color: Colors.orange,
+          onTap: () {
+            setState(() => _activeSectionIndex = 2);
+            // Kaller resolve direkte når vi går inn i oppsett
+            _resolvePendingMatches();
+          },
+        ),
+        _MenuCard(
+          title: "Innstillinger",
+          icon: Icons.settings,
+          color: Colors.grey,
+          onTap: () async {
+            final doc = await FirebaseFirestore.instance
+                .collection('tournaments').doc(widget.tournamentId).get();
+            if (!context.mounted) return;
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => EditTournamentPage(
+                tournamentId: widget.tournamentId,
+                initialData: doc.data() ?? {},
+              ),
+            ));
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActiveSection() {
+    switch (_activeSectionIndex) {
+      case 0:
+        return _buildTeamsTab();
+      case 1:
+        return _buildScheduleTab();
+      case 2:
+        return DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              const TabBar(
+                labelColor: AppColors.adminText,
+                unselectedLabelColor: AppColors.adminTextSecondary,
+                indicatorColor: AppColors.adminText,
+                tabs: [
+                  Tab(icon: Icon(Icons.grid_view), text: "Grupper"),
+                  Tab(icon: Icon(Icons.emoji_events), text: "Sluttspill"),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _buildGroupsTab(),
+                    _buildPlayoffsTab(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      default:
+        return const SizedBox();
+    }
   }
 
   // ─── Category selector ────────────────────────────────────────────────────
@@ -2656,4 +2733,50 @@ class _BracketPainterTopDown extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class _MenuCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _MenuCard({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          color: AppColors.adminSurface,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 48, color: color),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.adminText,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

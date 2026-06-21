@@ -10,12 +10,11 @@ import 'admin_login_page.dart';
 import 'player_claims_page.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_colors.dart';
+import 'admin_dashboard_overview.dart'; // Importerer oversiktsmodulen
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const AdminApp());
 }
 
@@ -29,10 +28,7 @@ class AdminApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.admin,
       builder: (context, child) {
-        return Container(
-          color: AppColors.adminBg,
-          child: child,
-        );
+        return Container(color: AppColors.adminBg, child: child);
       },
       home: const AuthGate(),
     );
@@ -90,7 +86,7 @@ class AdminDashboard extends StatelessWidget {
         backgroundColor: Colors.blue[800],
         foregroundColor: AppColors.adminText,
       ),
-      
+
       // --- SIDEMENY (DRAWER) ---
       drawer: Drawer(
         child: ListView(
@@ -102,8 +98,18 @@ class AdminDashboard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text("Spike Dunk Admin", style: TextStyle(color: AppColors.adminText, fontSize: 24, fontWeight: FontWeight.bold)),
-                  Text("Kontrollpanel", style: TextStyle(color: AppColors.adminTextSecondary)),
+                  Text(
+                    "Spike Dunk Admin",
+                    style: TextStyle(
+                      color: AppColors.adminText,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    "Kontrollpanel",
+                    style: TextStyle(color: AppColors.adminTextSecondary),
+                  ),
                 ],
               ),
             ),
@@ -121,7 +127,9 @@ class AdminDashboard extends StatelessWidget {
                 Navigator.pop(context);
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => const AllPlayersPage()),
+                  MaterialPageRoute(
+                    builder: (context) => const AllPlayersPage(),
+                  ),
                 );
               },
             ),
@@ -132,7 +140,9 @@ class AdminDashboard extends StatelessWidget {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const PlayerClaimsPage()),
+                  MaterialPageRoute(
+                    builder: (context) => const PlayerClaimsPage(),
+                  ),
                 );
               },
             ),
@@ -181,9 +191,15 @@ class AdminDashboard extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
-                  Icon(Icons.inbox, size: 64, color: AppColors.adminTextSecondary),
+                  Icon(
+                    Icons.inbox,
+                    size: 64,
+                    color: AppColors.adminTextSecondary,
+                  ),
                   SizedBox(height: 16),
-                  Text("Ingen turneringer enda. Trykk på knappen for å lage en!"),
+                  Text(
+                    "Ingen turneringer enda. Trykk på knappen for å lage en!",
+                  ),
                 ],
               ),
             );
@@ -192,142 +208,203 @@ class AdminDashboard extends StatelessWidget {
           final docs = snapshot.data!.docs;
 
           // Vi bruker en ListView som ser bra ut på PC-skjerm
-          return ListView.builder(
-            padding: const EdgeInsets.all(20),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              final data = docs[index].data() as Map<String, dynamic>;
-              final id = docs[index].id;
-              
-              final name = data['name'] ?? 'Ukjent';
-              final location = data['location'] ?? 'Ukjent sted';
-              final start = data['start_date'] ?? '?';
-              final end = data['end_date'] ?? '?';
-              final imageUrl = data['image_url'] ?? '';
+          return Column(
+            children: [
+              // Dashboard-oversikt (Statistikk for turneringer)
+              const AdminDashboardOverview(),
 
-              return Card(
-                elevation: 2,
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  leading: CircleAvatar(
-                    radius: 25,
-                    backgroundColor: Colors.blue[100],
-                    backgroundImage: imageUrl.isNotEmpty
-                        ? NetworkImage(imageUrl)
-                        : null,
-                    child: imageUrl.isEmpty
-                        ? const Icon(Icons.emoji_events, color: Colors.blue)
-                        : null,
-                  ),
-                  title: Text(
-                    name,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(height: 4),
-                      Row(
+              // Liste over turneringer
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(20),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final data = docs[index].data() as Map<String, dynamic>;
+                    final id = docs[index].id;
+
+                    final name = data['name'] ?? 'Ukjent';
+                    final location = data['location'] ?? 'Ukjent sted';
+                    final start = data['start_date'] ?? '?';
+                    final end = data['end_date'] ?? '?';
+                    final imageUrl = data['image_url'] ?? '';
+
+                    return Card(
+                      elevation: 2,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.map, size: 16, color: AppColors.adminTextSecondary),
-                          const SizedBox(width: 4),
-                          
-                          // --- FIKSEN ER HER ---
-                          // Flexible gjør at teksten krymper hvis det er trangt
-                          Flexible( 
-                            child: Text(
-                              location,
-                              overflow: TextOverflow.ellipsis, // Legger til "..." hvis for lang
-                              maxLines: 1, // Holder seg på én linje
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
+                            leading: CircleAvatar(
+                              radius: 25,
+                              backgroundColor: Colors.blue[100],
+                              backgroundImage: imageUrl.isNotEmpty
+                                  ? NetworkImage(imageUrl)
+                                  : null,
+                              child: imageUrl.isEmpty
+                                  ? const Icon(
+                                      Icons.emoji_events,
+                                      color: Colors.blue,
+                                    )
+                                  : null,
+                            ),
+                            title: Text(
+                              name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.map,
+                                      size: 16,
+                                      color: AppColors.adminTextSecondary,
+                                    ),
+                                    const SizedBox(width: 4),
+
+                                    // --- FIKSEN ER HER ---
+                                    // Flexible gjør at teksten krymper hvis det er trangt
+                                    Flexible(
+                                      child: Text(
+                                        location,
+                                        overflow: TextOverflow
+                                            .ellipsis, // Legger til "..." hvis for lang
+                                        maxLines: 1, // Holder seg på én linje
+                                      ),
+                                    ),
+
+                                    const SizedBox(width: 16),
+
+                                    // Datoene kan også bli for lange på mobilskjermer
+                                    const Icon(
+                                      Icons.calendar_today,
+                                      size: 16,
+                                      color: AppColors.adminTextSecondary,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: Text(
+                                        "$start - $end",
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 1,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
-                          
-                          const SizedBox(width: 16),
-                          
-                          // Datoene kan også bli for lange på mobilskjermer
-                          const Icon(Icons.calendar_today, size: 16, color: AppColors.adminTextSecondary),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              "$start - $end",
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              right: 16,
+                              bottom: 8,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            TournamentControlPage(
+                                              tournamentId: id,
+                                              tournamentName: name,
+                                            ),
+                                      ),
+                                    );
+                                  },
+                                  child: const Text("Administrer"),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  tooltip: 'Slett turnering',
+                                  onPressed: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        title: const Text("Slett turnering"),
+                                        content: Text(
+                                          "Er du sikker på at du vil slette '$name'?\n\nDette kan ikke angres!",
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(context, false),
+                                            child: const Text("Avbryt"),
+                                          ),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.red,
+                                              foregroundColor:
+                                                  AppColors.adminText,
+                                            ),
+                                            onPressed: () =>
+                                                Navigator.pop(context, true),
+                                            child: const Text("Slett"),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirm == true && context.mounted) {
+                                      try {
+                                        await FirebaseFirestore.instance
+                                            .collection('tournaments')
+                                            .doc(id)
+                                            .delete();
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                "Turnering '$name' slettet.",
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                "Feil ved sletting: $e",
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    }
+                                  },
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ElevatedButton(
-                        onPressed: () {
-                          // NAVIGER TIL COCKPITEN
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => TournamentControlPage(
-                                tournamentId: id,     // Send ID-en videre
-                                tournamentName: name, // Send navnet videre
-                              ),
-                            ),
-                          );
-                        },
-                        child: const Text("Administrer"),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        tooltip: 'Slett turnering',
-                        onPressed: () async {
-                          final confirm = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text("Slett turnering"),
-                              content: Text("Er du sikker på at du vil slette '$name'?\n\nDette kan ikke angres!"),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, false),
-                                  child: const Text("Avbryt"),
-                                ),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.red,
-                                    foregroundColor: AppColors.adminText,
-                                  ),
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text("Slett"),
-                                ),
-                              ],
-                            ),
-                          );
-                          
-                          if (confirm == true && context.mounted) {
-                            try {
-                              await FirebaseFirestore.instance.collection('tournaments').doc(id).delete();
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text("Turnering '$name' slettet.")),
-                                );
-                              }
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text("Feil ved sletting: $e")),
-                                );
-                              }
-                            }
-                          }
-                        },
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           );
         },
       ),
