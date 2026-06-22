@@ -6,7 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'match_control_page.dart';
 import 'registrations_page.dart';
 import 'edit_tournament_page.dart';
-import 'tournament_schedule_page.dart';
+
 import 'theme/app_colors.dart';
 
 class TournamentControlPage extends StatefulWidget {
@@ -25,6 +25,11 @@ class TournamentControlPage extends StatefulWidget {
 
 class _TournamentControlPageState extends State<TournamentControlPage> {
   String? _selectedCategoryId;
+
+  // Filtre for Kamper-fanen
+  String _selectedStatusFilter = 'alle';
+  String _selectedRoundFilter = 'alle';
+  String _selectedCourtFilter = 'alle';
 
   // Lytter på Firestore – oppdager når livescore-appen registrerer resultater
   StreamSubscription<QuerySnapshot>? _finishedMatchListener;
@@ -1654,48 +1659,67 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           .snapshots(),
       builder: (ctx, snap) {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        final allMatches = snap.data!.docs;
+        var allMatches = snap.data!.docs;
+
+        if (_selectedCategoryId != null) {
+          allMatches = allMatches.where((m) => (m.data() as Map)['category_id'] == _selectedCategoryId).toList();
+        }
 
         if (allMatches.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.schedule, size: 56, color: AppColors.adminOrange),
-                  const SizedBox(height: 16),
-                  const Text("Ingen kamper planlagt enda.",
-                      style: TextStyle(color: AppColors.adminText, fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Generer grupper og sett kamptider via Auto-skjema.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.adminTextSecondary, fontSize: 13),
-                  ),
-                  const SizedBox(height: 24),
-                  StreamBuilder<DocumentSnapshot>(
-                    stream: FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).snapshots(),
-                    builder: (ctx2, tSnap) {
-                      final td = tSnap.data?.data() as Map<String, dynamic>? ?? {};
-                      return ElevatedButton.icon(
-                        icon: const Icon(Icons.auto_fix_high),
-                        label: const Text("Auto-skjema"),
-                        onPressed: () => Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => TournamentSchedulePage(
-                            tournamentId: widget.tournamentId,
-                            tournamentName: widget.tournamentName,
-                            courtsCount: (td['courts_count'] as num?)?.toInt() ?? 4,
-                            matchDurationMinutes: (td['match_duration_minutes'] as num?)?.toInt() ?? 60,
-                          ),
-                        )),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          );
+          return const Center(child: Text("Ingen kamper for valgt klasse.", style: TextStyle(color: AppColors.adminTextSecondary)));
+        }
+
+        // Pakk ut unike runder og baner for filter-boblene
+        final Set<String> rounds = {};
+        final Set<String> courts = {};
+        for (var m in allMatches) {
+           final d = m.data() as Map<String, dynamic>;
+           final court = d['court'] as String? ?? '';
+           if (court.isNotEmpty) courts.add(court);
+           
+           final stage = d['stage'] as String? ?? '';
+           if (stage == 'group') {
+             final g = d['group'] as String? ?? '';
+             if (g.isNotEmpty) rounds.add('Pulje $g');
+           } else if (stage == 'playoff') {
+             final r = d['round'] as String? ?? '';
+             if (r == 'r16') rounds.add('1/16');
+             else if (r == 'r8') rounds.add('1/8');
+             else if (r == 'qf') rounds.add('Kvart');
+             else if (r == 'sf') rounds.add('Semi');
+             else if (r == 'final') rounds.add('Finale');
+             else rounds.add('Playoff');
+           }
+        }
+        final sortedRounds = rounds.toList()..sort();
+        final sortedCourts = courts.toList()..sort((a, b) => a.compareTo(b));
+
+        // Bruk filtrene
+        if (_selectedStatusFilter != 'alle') {
+           allMatches = allMatches.where((m) => (m.data() as Map)['status'] == _selectedStatusFilter).toList();
+        }
+        if (_selectedRoundFilter != 'alle') {
+           allMatches = allMatches.where((m) {
+             final d = m.data() as Map<String, dynamic>;
+             final stage = d['stage'] as String? ?? '';
+             String roundLabel = '';
+             if (stage == 'group') {
+               final g = d['group'] as String? ?? '';
+               roundLabel = 'Pulje $g';
+             } else if (stage == 'playoff') {
+               final r = d['round'] as String? ?? '';
+               if (r == 'r16') roundLabel = '1/16';
+               else if (r == 'r8') roundLabel = '1/8';
+               else if (r == 'qf') roundLabel = 'Kvart';
+               else if (r == 'sf') roundLabel = 'Semi';
+               else if (r == 'final') roundLabel = 'Finale';
+               else roundLabel = 'Playoff';
+             }
+             return roundLabel == _selectedRoundFilter;
+           }).toList();
+        }
+        if (_selectedCourtFilter != 'alle') {
+           allMatches = allMatches.where((m) => (m.data() as Map)['court'] == _selectedCourtFilter).toList();
         }
 
         final sorted = List<DocumentSnapshot>.from(allMatches)
@@ -1721,39 +1745,78 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         }
         final sortedDates = byDate.keys.toList()..sort();
 
+        Widget filterChip(String label, String id, String currentVal, Function(String) onSelect) {
+           final isSelected = id == currentVal;
+           return Padding(
+             padding: const EdgeInsets.only(right: 8),
+             child: ChoiceChip(
+               label: Text(label),
+               selected: isSelected,
+               onSelected: (v) { if(v) onSelect(id); },
+               selectedColor: AppColors.coral,
+               labelStyle: TextStyle(
+                 color: isSelected ? Colors.white : AppColors.adminTextSecondary,
+                 fontWeight: FontWeight.bold,
+               ),
+               backgroundColor: AppColors.adminSurface,
+               side: BorderSide(color: isSelected ? AppColors.coral : AppColors.adminSurfaceElevated),
+             ),
+           );
+        }
+
         return Column(
           children: [
-            StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).snapshots(),
-              builder: (ctx2, tSnap) {
-                final td = tSnap.data?.data() as Map<String, dynamic>? ?? {};
-                return Container(
-                  color: AppColors.adminSurface,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(
-                    children: [
-                      const Text("Kampprogram", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.adminText)),
-                      const Spacer(),
-                      TextButton.icon(
-                        icon: const Icon(Icons.auto_fix_high, size: 16, color: AppColors.adminOrange),
-                        label: const Text("Auto-skjema", style: TextStyle(color: AppColors.adminOrange, fontSize: 13)),
-                        onPressed: () => Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => TournamentSchedulePage(
-                            tournamentId: widget.tournamentId,
-                            tournamentName: widget.tournamentName,
-                            courtsCount: (td['courts_count'] as num?)?.toInt() ?? 4,
-                            matchDurationMinutes: (td['match_duration_minutes'] as num?)?.toInt() ?? 60,
-                          ),
-                        )),
+            Container(
+               color: AppColors.adminSurface,
+               width: double.infinity,
+               child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: Row(
+                        children: [
+                          filterChip('Alle', 'alle', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
+                          filterChip('Live', 'live', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
+                          filterChip('Kommende', 'scheduled', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
+                          filterChip('Ferdig', 'finished', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
+                    ),
+                    if (sortedRounds.isNotEmpty)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        child: Row(
+                          children: [
+                            filterChip('Alle runder', 'alle', _selectedRoundFilter, (v) => setState(() => _selectedRoundFilter = v)),
+                            for (var r in sortedRounds)
+                              filterChip(r, r, _selectedRoundFilter, (v) => setState(() => _selectedRoundFilter = v)),
+                          ],
+                        ),
+                      ),
+                    if (sortedCourts.isNotEmpty)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        child: Row(
+                          children: [
+                            filterChip('Alle baner', 'alle', _selectedCourtFilter, (v) => setState(() => _selectedCourtFilter = v)),
+                            for (var c in sortedCourts)
+                              filterChip(c, c, _selectedCourtFilter, (v) => setState(() => _selectedCourtFilter = v)),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                  ],
+               ),
             ),
             const Divider(height: 1),
             Expanded(
-              child: ListView.builder(
+              child: sortedDates.isEmpty 
+                  ? const Center(child: Text("Ingen kamper matcher filteret", style: TextStyle(color: AppColors.adminTextSecondary)))
+                  : ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 itemCount: sortedDates.length,
                 itemBuilder: (ctx, i) =>
@@ -2012,7 +2075,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text("Admin: ${widget.tournamentName}"),
@@ -2020,7 +2083,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             labelColor: AppColors.adminText,
             unselectedLabelColor: AppColors.adminTextSecondary,
             indicatorColor: AppColors.adminOrange,
+            isScrollable: true,
             tabs: [
+              Tab(icon: Icon(Icons.dashboard), text: "Oversikt"),
               Tab(icon: Icon(Icons.sports_volleyball), text: "Kamper"),
               Tab(icon: Icon(Icons.account_tree), text: "Oppsett"),
               Tab(icon: Icon(Icons.groups), text: "Lag"),
@@ -2090,6 +2155,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             Expanded(
               child: TabBarView(
                 children: [
+                  _buildDashboardTab(),
                   _buildScheduleTab(),
                   _buildOppsettWrapper(),
                   _buildTeamsTab(),
@@ -2104,6 +2170,151 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           icon: const Icon(Icons.group_add),
         ),
       ),
+    );
+  }
+
+  // ─── Oversikt (Dashboard) ─────────────────────────────────────────────────
+
+  Widget _buildDashboardTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+      builder: (ctx, matchSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+          builder: (ctx2, teamSnap) {
+            return StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+              builder: (ctx3, catSnap) {
+                return StreamBuilder<DocumentSnapshot>(
+                  stream: FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).snapshots(),
+                  builder: (ctx4, tourSnap) {
+                    if (!matchSnap.hasData || !teamSnap.hasData || !catSnap.hasData || !tourSnap.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final matches = matchSnap.data!.docs;
+                    final teams = teamSnap.data!.docs;
+                    final categories = catSnap.data!.docs;
+                    final tourData = tourSnap.data?.data() as Map<String, dynamic>? ?? {};
+
+                    final courtsCount = (tourData['courts_count'] as num?)?.toInt() ?? 4;
+                    final totalMatches = matches.length;
+                    final totalTeams = teams.length;
+
+                    Map<String, int> matchesPerGender = {'Herrer': 0, 'Damer': 0, 'Annet': 0};
+                    Map<String, int> matchesPerLevel = {};
+
+                    Map<String, String> catIdToName = {};
+                    for (var c in categories) {
+                      final d = c.data() as Map<String, dynamic>;
+                      final name = d['name'] as String? ?? '';
+                      catIdToName[c.id] = name;
+                    }
+
+                    for (var m in matches) {
+                      final d = m.data() as Map<String, dynamic>;
+                      final catId = d['category_id'] as String? ?? '';
+                      final catName = catIdToName[catId] ?? '';
+                      
+                      if (catName.toLowerCase().contains('menn') || catName.toLowerCase().contains('herrer')) {
+                        matchesPerGender['Herrer'] = (matchesPerGender['Herrer'] ?? 0) + 1;
+                      } else if (catName.toLowerCase().contains('damer')) {
+                        matchesPerGender['Damer'] = (matchesPerGender['Damer'] ?? 0) + 1;
+                      } else {
+                        matchesPerGender['Annet'] = (matchesPerGender['Annet'] ?? 0) + 1;
+                      }
+
+                      String level = 'Ukjent';
+                      final parts = catName.split(' ');
+                      if (parts.length > 1) {
+                        level = parts.sublist(1).join(' ');
+                      }
+                      matchesPerLevel[level] = (matchesPerLevel[level] ?? 0) + 1;
+                    }
+
+                    Widget statCard(String title, String value, IconData icon, Color color) {
+                      return Card(
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(icon, color: color, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(title, style: const TextStyle(fontSize: 14, color: AppColors.adminTextSecondary)),
+                                ],
+                              ),
+                              const Spacer(),
+                              Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Turnerings-Oversikt", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                          const SizedBox(height: 16),
+                          GridView.count(
+                            crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 2,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            childAspectRatio: 1.5,
+                            children: [
+                              statCard("Påmeldte lag", "$totalTeams", Icons.groups, Colors.blue),
+                              statCard("Antall baner", "$courtsCount", Icons.sports_tennis, Colors.green),
+                              statCard("Kamper totalt", "$totalMatches", Icons.sports_volleyball, Colors.orange),
+                              statCard("Ferdigspilte", "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}", Icons.check_circle, Colors.teal),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          const Text("Kamper per Klasse (Kjønn)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: matchesPerGender.entries.where((e) => e.value > 0).map((e) {
+                              return Chip(
+                                label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                backgroundColor: AppColors.coral,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 24),
+                          const Text("Kamper per Nivå", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: matchesPerLevel.entries.where((e) => e.value > 0).map((e) {
+                              return Chip(
+                                label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                backgroundColor: AppColors.adminSurfaceElevated,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 
