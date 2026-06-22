@@ -265,7 +265,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
               leading: const Icon(Icons.people),
               title: const Text('Spillerdatabase'),
               selected: true,
-              selectedTileColor: AppColors.green.withOpacity(0.2),
+              selectedTileColor: AppColors.green.withValues(alpha: 0.2),
               onTap: () {
                 Navigator.pop(context);
               },
@@ -308,7 +308,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                   onTap: () => _showPlayerDialog(docId: docId, existingData: data),
                   leading: CircleAvatar(
                     radius: 25,
-                    backgroundColor: AppColors.green.withOpacity(0.2),
+                    backgroundColor: AppColors.green.withValues(alpha: 0.2),
                     backgroundImage: (imageUrl.isNotEmpty) 
                         ? NetworkImage(imageUrl) 
                         : null,

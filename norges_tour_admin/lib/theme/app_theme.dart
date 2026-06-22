@@ -25,15 +25,15 @@ class AppTheme {
 
   // ── Elevation / shadows ───────────────────────────────────────
   static List<BoxShadow> get shadowSm => [
-    BoxShadow(color: AppColors.ink.withOpacity(0.07), blurRadius: 16, offset: const Offset(0, 4)),
-    BoxShadow(color: AppColors.ink.withOpacity(0.05), blurRadius: 3,  offset: const Offset(0, 1)),
+    BoxShadow(color: AppColors.ink.withValues(alpha: 0.07), blurRadius: 16, offset: const Offset(0, 4)),
+    BoxShadow(color: AppColors.ink.withValues(alpha: 0.05), blurRadius: 3,  offset: const Offset(0, 1)),
   ];
   static List<BoxShadow> get shadowLg => [
-    BoxShadow(color: AppColors.ink.withOpacity(0.20), blurRadius: 40, offset: const Offset(0, 16)),
-    BoxShadow(color: AppColors.ink.withOpacity(0.10), blurRadius: 12, offset: const Offset(0, 4)),
+    BoxShadow(color: AppColors.ink.withValues(alpha: 0.20), blurRadius: 40, offset: const Offset(0, 16)),
+    BoxShadow(color: AppColors.ink.withValues(alpha: 0.10), blurRadius: 12, offset: const Offset(0, 4)),
   ];
   static List<BoxShadow> get shadowCoral => [
-    BoxShadow(color: AppColors.coral.withOpacity(0.30), blurRadius: 20, offset: const Offset(0, 8)),
+    BoxShadow(color: AppColors.coral.withValues(alpha: 0.30), blurRadius: 20, offset: const Offset(0, 8)),
   ];
 
   // ── Spacing ───────────────────────────────────────────────────
@@ -80,7 +80,7 @@ class AppTheme {
 
       // bottom nav
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: AppColors.sand0.withOpacity(0.86),
+        backgroundColor: AppColors.sand0.withValues(alpha: 0.86),
         selectedItemColor: AppColors.coral,
         unselectedItemColor: AppColors.ink3,
         selectedLabelStyle: AppText.uiTab.copyWith(color: AppColors.coral, fontWeight: FontWeight.w800),
@@ -174,7 +174,7 @@ class AppTheme {
         surface:        AppColors.nightSurface0,
         onPrimary:      Colors.white,
         onSurface:      AppColors.nightInk,
-        outline:        Colors.white.withOpacity(0.10),
+        outline:        Colors.white.withValues(alpha: 0.10),
       ),
       textTheme: _textTheme(AppColors.nightInk),
       fontFamily: GoogleFonts.schibstedGrotesk().fontFamily,
@@ -187,7 +187,7 @@ class AppTheme {
         titleTextStyle: AppText.dispH2(20).copyWith(color: AppColors.nightInk),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: AppColors.nightSurface0.withOpacity(0.88),
+        backgroundColor: AppColors.nightSurface0.withValues(alpha: 0.88),
         selectedItemColor: AppColors.coral,
         unselectedItemColor: AppColors.nightInk3,
         type: BottomNavigationBarType.fixed,
@@ -215,11 +215,11 @@ class AppTheme {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.10)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.10)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
@@ -228,7 +228,7 @@ class AppTheme {
         hintStyle: AppText.uiBody.copyWith(color: AppColors.nightInk3),
       ),
       dividerTheme: DividerThemeData(
-        color: Colors.white.withOpacity(0.10), thickness: 1, space: 0,
+        color: Colors.white.withValues(alpha: 0.10), thickness: 1, space: 0,
       ),
     );
     return base;
@@ -249,7 +249,7 @@ class AppTheme {
         surface:        AppColors.adminSurface,
         onPrimary:      Colors.white,
         onSurface:      AppColors.adminText,
-        outline:        Colors.white.withOpacity(0.15),
+        outline:        Colors.white.withValues(alpha: 0.15),
       ),
       textTheme: _textTheme(AppColors.adminText),
       fontFamily: GoogleFonts.schibstedGrotesk().fontFamily,
@@ -262,7 +262,7 @@ class AppTheme {
         titleTextStyle: AppText.dispH2(20).copyWith(color: AppColors.adminText),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: AppColors.adminSurface.withOpacity(0.9),
+        backgroundColor: AppColors.adminSurface.withValues(alpha: 0.9),
         selectedItemColor: AppColors.adminOrange,
         unselectedItemColor: AppColors.adminTextSecondary,
         type: BottomNavigationBarType.fixed,
@@ -289,7 +289,7 @@ class AppTheme {
           foregroundColor: AppColors.adminText,
           minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
-          side: BorderSide(color: Colors.white.withOpacity(0.2)),
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
           textStyle: AppText.uiCta.copyWith(color: AppColors.adminText, fontWeight: FontWeight.w700),
         ),
       ),
@@ -299,11 +299,11 @@ class AppTheme {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.15)),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.15)),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
@@ -313,7 +313,7 @@ class AppTheme {
         labelStyle: AppText.monoSm.copyWith(color: AppColors.adminTextSecondary, fontSize: 11),
       ),
       dividerTheme: DividerThemeData(
-        color: Colors.white.withOpacity(0.10), thickness: 1, space: 0,
+        color: Colors.white.withValues(alpha: 0.10), thickness: 1, space: 0,
       ),
     );
     return base;
@@ -332,7 +332,7 @@ class AppTheme {
     titleSmall:    AppText.uiTitle.copyWith(fontSize: 14, color: color),
     bodyLarge:     AppText.uiBody.copyWith(fontSize: 16, color: color),
     bodyMedium:    AppText.uiBody.copyWith(color: color),
-    bodySmall:     AppText.uiCaption.copyWith(color: color.withOpacity(0.7)),
+    bodySmall:     AppText.uiCaption.copyWith(color: color.withValues(alpha: 0.7)),
     labelLarge:    AppText.uiCta.copyWith(color: color),
     labelMedium:   AppText.monoMd.copyWith(color: color),
     labelSmall:    AppText.monoSm.copyWith(color: color),

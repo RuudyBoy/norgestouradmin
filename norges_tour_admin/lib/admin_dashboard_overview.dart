@@ -96,9 +96,13 @@ class _TournamentStatCard extends StatelessWidget {
           for (var doc in matchSnap.data!.docs) {
             final data = doc.data() as Map<String, dynamic>;
             final status = data['status'];
-            if (status == 'live') liveCount++;
-            else if (status == 'scheduled') scheduledCount++;
-            else if (status == 'finished') finishedCount++;
+            if (status == 'live') {
+              liveCount++;
+            } else if (status == 'scheduled') {
+              scheduledCount++;
+            } else if (status == 'finished') {
+              finishedCount++;
+            }
           }
         }
 

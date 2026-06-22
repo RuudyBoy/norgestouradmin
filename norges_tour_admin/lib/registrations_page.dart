@@ -21,7 +21,7 @@ class RegistrationsPage extends StatefulWidget {
 class _RegistrationsPageState extends State<RegistrationsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  String? _selectedCategoryId;
+
   String? _selectedCategoryName;
 
   // Filter
@@ -395,7 +395,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.15) : Colors.transparent,
+          color: selected ? color.withValues(alpha: 0.15) : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: selected ? color : AppColors.adminTextSecondary,
@@ -525,10 +525,10 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: _statusColor(status).withOpacity(0.1),
+                    color: _statusColor(status).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
                     border:
-                        Border.all(color: _statusColor(status).withOpacity(0.4)),
+                        Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -606,9 +606,9 @@ class _RegistrationsPageState extends State<RegistrationsPage>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withOpacity(0.4)),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

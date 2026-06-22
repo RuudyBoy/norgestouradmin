@@ -89,6 +89,6 @@ class AppText {
   /// On-dark variant
   static TextStyle monoSmLight = GoogleFonts.ibmPlexMono(
     fontWeight: FontWeight.w500, fontSize: 9.5, letterSpacing: 1.3,
-    color: Colors.white.withOpacity(0.75),
+    color: Colors.white.withValues(alpha: 0.75),
   );
 }

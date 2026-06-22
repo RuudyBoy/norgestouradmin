@@ -66,7 +66,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.adminText.withOpacity(0.1),
+                  color: AppColors.adminText.withValues(alpha: 0.1),
                   blurRadius: 20,
                   offset: const Offset(0, 10),
                 )
@@ -87,7 +87,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                 Text(
                   "Logg inn for å administrere turneringer",
                   textAlign: TextAlign.center,
-                  style: AppText.uiBody.copyWith(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
+                  style: AppText.uiBody.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                 ),
                 const SizedBox(height: 32),
                 TextField(

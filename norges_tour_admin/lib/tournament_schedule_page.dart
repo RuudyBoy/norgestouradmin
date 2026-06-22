@@ -451,7 +451,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
           border: Border.all(color: borderColor, width: 1.5),
           borderRadius: BorderRadius.circular(8),
           color: isFinished
-              ? AppColors.green.withOpacity(0.1)
+              ? AppColors.green.withValues(alpha: 0.1)
               : isPending
                   ? AppColors.adminTextSecondary
                   : AppColors.adminText,
@@ -476,11 +476,11 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                 if (group != null)
                   _tag("Pulje $group", AppColors.adminSurfaceElevated, AppColors.adminText)
                 else if (bracket != null)
-                  _tag("$bracket-bracket", AppColors.adminOrangeHover.withOpacity(0.2), AppColors.adminOrangeHover),
+                  _tag("$bracket-bracket", AppColors.adminOrangeHover.withValues(alpha: 0.2), AppColors.adminOrangeHover),
                 if (isFinished)
-                  _tag("Ferdig", AppColors.green.withOpacity(0.2), AppColors.green)
+                  _tag("Ferdig", AppColors.green.withValues(alpha: 0.2), AppColors.green)
                 else if (status == 'live')
-                  _tag("LIVE", AppColors.adminOrange.withOpacity(0.2), AppColors.adminOrangeHover),
+                  _tag("LIVE", AppColors.adminOrange.withValues(alpha: 0.2), AppColors.adminOrangeHover),
               ],
             ),
             const SizedBox(height: 6),
@@ -665,7 +665,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
-            border: Border.all(color: color.withOpacity(0.4)),
+            border: Border.all(color: color.withValues(alpha: 0.4)),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
@@ -674,7 +674,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                 ),
                 child: Text("$bracket-Bracket",
@@ -724,7 +724,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
       decoration: BoxDecoration(
         border: Border(
             bottom: BorderSide(color: AppColors.adminTextSecondary)),
-        color: isFinished ? AppColors.green.withOpacity(0.1) : null,
+        color: isFinished ? AppColors.green.withValues(alpha: 0.1) : null,
       ),
       child: Row(
         children: [

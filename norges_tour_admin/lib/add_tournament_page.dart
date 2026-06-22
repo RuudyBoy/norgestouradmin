@@ -314,9 +314,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: typeColor.withOpacity(0.07),
+                    color: typeColor.withValues(alpha: 0.07),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: typeColor.withOpacity(0.3)),
+                    border: Border.all(color: typeColor.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     children: [
@@ -518,9 +518,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.1),
+                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
+                        border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)),
                       ),
                       child: Text(
                         "Lag seedes automatisk etter rankingpoeng:\n"
@@ -554,7 +554,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.1),
+                    color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(

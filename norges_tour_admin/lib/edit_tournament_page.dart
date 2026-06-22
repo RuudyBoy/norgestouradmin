@@ -124,8 +124,11 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     setState(() {
       if (which == 'start') {
         _startDate = picked;
-      } else if (which == 'end') _endDate = picked;
-      else _registrationDeadline = picked;
+      } else if (which == 'end') {
+        _endDate = picked;
+      } else {
+        _registrationDeadline = picked;
+      }
     });
   }
 
@@ -456,9 +459,9 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
         borderRadius: BorderRadius.circular(10),
-        color: color.withOpacity(0.06),
+        color: color.withValues(alpha: 0.06),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
