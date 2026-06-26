@@ -15,7 +15,7 @@ class AdminDashboardOverview extends StatelessWidget {
           .snapshots(),
       builder: (context, tourSnapshot) {
         if (!tourSnapshot.hasData || tourSnapshot.data!.docs.isEmpty) {
-          return const SizedBox.shrink(); // Ingen turneringer
+          return const SizedBox.shrink();
         }
 
         final tournaments = tourSnapshot.data!.docs;
@@ -48,6 +48,7 @@ class AdminDashboardOverview extends StatelessWidget {
                   return _TournamentStatCard(
                     tournamentId: tDoc.id,
                     tournamentName: tName,
+                    tournamentData: tData,
                   );
                 },
               ),
@@ -74,37 +75,34 @@ class AdminDashboardOverview extends StatelessWidget {
 class _TournamentStatCard extends StatelessWidget {
   final String tournamentId;
   final String tournamentName;
+  final Map<String, dynamic> tournamentData;
 
   const _TournamentStatCard({
     required this.tournamentId,
     required this.tournamentName,
+    required this.tournamentData,
   });
+
+  String _shortDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return '–';
+    final parts = dateStr.split('.');
+    if (parts.length >= 2) return '${parts[0]}.${parts[1]}';
+    return dateStr;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final deadline = tournamentData['registration_deadline'] as String?;
+    final regStatus = tournamentData['registration_status'] as String? ?? 'open';
+    final isOpen = regStatus == 'open';
+
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('matches')
+          .collection('teams')
           .where('tournament_id', isEqualTo: tournamentId)
           .snapshots(),
-      builder: (context, matchSnap) {
-        int liveCount = 0;
-        int scheduledCount = 0;
-        int finishedCount = 0;
-
-        if (matchSnap.hasData) {
-          for (var doc in matchSnap.data!.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final status = data['status'];
-            if (status == 'live') {
-              liveCount++;
-            } else if (status == 'scheduled') {
-              scheduledCount++;
-            } else if (status == 'finished') {
-              finishedCount++;
-            }
-          }
-        }
+      builder: (context, teamsSnap) {
+        final teamCount = teamsSnap.hasData ? teamsSnap.data!.docs.length : 0;
 
         return Container(
           width: 260,
@@ -129,16 +127,28 @@ class _TournamentStatCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 8),
-                  if (!matchSnap.hasData)
+                  if (!teamsSnap.hasData)
                     const Expanded(child: Center(child: CircularProgressIndicator()))
                   else
                     Expanded(
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          _StatColumn(label: "Live", count: liveCount, color: Colors.green),
-                          _StatColumn(label: "Venter", count: scheduledCount, color: Colors.orange),
-                          _StatColumn(label: "Ferdig", count: finishedCount, color: Colors.blue),
+                          _StatColumn(
+                            label: "Lag",
+                            value: teamCount.toString(),
+                            color: Colors.green,
+                          ),
+                          _StatColumn(
+                            label: "Frist",
+                            value: _shortDate(deadline),
+                            color: Colors.orange,
+                          ),
+                          _StatColumn(
+                            label: "Påmelding",
+                            value: isOpen ? "Åpen" : "Stengt",
+                            color: isOpen ? Colors.green : Colors.red,
+                          ),
                         ],
                       ),
                     ),
@@ -154,12 +164,12 @@ class _TournamentStatCard extends StatelessWidget {
 
 class _StatColumn extends StatelessWidget {
   final String label;
-  final int count;
+  final String value;
   final Color color;
 
   const _StatColumn({
     required this.label,
-    required this.count,
+    required this.value,
     required this.color,
   });
 
@@ -169,9 +179,9 @@ class _StatColumn extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(
-          count.toString(),
+          value,
           style: TextStyle(
-            fontSize: 24,
+            fontSize: 22,
             fontWeight: FontWeight.bold,
             color: color,
           ),
