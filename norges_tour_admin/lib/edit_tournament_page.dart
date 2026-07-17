@@ -21,6 +21,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _locationCtrl;
   late final TextEditingController _imageUrlCtrl;
+  late final TextEditingController _maxTotalCtrl;
+  late final TextEditingController _customTypeCtrl;
 
   late int _courtsCount;
   late int _matchDurationMinutes;
@@ -34,7 +36,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
   DateTime? _startDate;
   DateTime? _endDate;
   DateTime? _registrationDeadline;
-
+  TimeOfDay? _endTime;
   bool _isSaving = false;
 
   static const _typeLabels = {
@@ -46,6 +48,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     'nm': 'NM',
     'nm_jr': 'NM Junior',
     'king_queen': 'King & Queen',
+    'custom': 'Egendefinert format',
   };
 
   @override
@@ -78,6 +81,20 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         );
       }
     }
+    
+    final rawEndTime = d['end_time'] as String?;
+    if (rawEndTime != null) {
+      final parts = rawEndTime.split(':');
+      if (parts.length == 2) {
+        _endTime = TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? 17,
+          minute: int.tryParse(parts[1]) ?? 0,
+        );
+      }
+    }
+    
+    _maxTotalCtrl = TextEditingController(text: d['max_teams_total']?.toString() ?? '');
+    _customTypeCtrl = TextEditingController(text: _selectedTypeId == 'custom' ? (d['tournament_type_label'] ?? '') : '');
   }
 
   @override
@@ -85,6 +102,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     _nameCtrl.dispose();
     _locationCtrl.dispose();
     _imageUrlCtrl.dispose();
+    _maxTotalCtrl.dispose();
+    _customTypeCtrl.dispose();
     super.dispose();
   }
 
@@ -137,6 +156,19 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
       _snack("Turneringsnavn kan ikke være tomt.");
       return;
     }
+    if (_selectedTypeId == 'custom' && _customTypeCtrl.text.trim().isEmpty) {
+      _snack("Navn på egendefinert format kan ikke være tomt.");
+      return;
+    }
+    if (_startTime == null || _endTime == null) {
+      _snack("Både starttid og sluttid må være valgt!");
+      return;
+    }
+    int? mt = int.tryParse(_maxTotalCtrl.text.trim());
+    if (mt == null) {
+      _snack("Maks lag totalt må være et tall.");
+      return;
+    }
     setState(() => _isSaving = true);
     try {
       await FirebaseFirestore.instance
@@ -150,8 +182,11 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         'match_duration_minutes': _matchDurationMinutes,
         if (_startTime != null)
           'start_time': '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}',
+        if (_endTime != null)
+          'end_time': '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}',
+        'max_teams_total': int.tryParse(_maxTotalCtrl.text.trim()),
         'tournament_type': _selectedTypeId,
-        'tournament_type_label': _typeLabels[_selectedTypeId] ?? _selectedTypeId,
+        'tournament_type_label': _selectedTypeId == 'custom' ? _customTypeCtrl.text.trim() : (_typeLabels[_selectedTypeId] ?? _selectedTypeId),
         'has_division_play': _hasDivisionPlay,
         'div1_size': _hasDivisionPlay ? _div1Size : 0,
         'status': _tournamentStatus,
@@ -285,6 +320,17 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                     .toList(),
                 onChanged: (v) => setState(() => _selectedTypeId = v ?? _selectedTypeId),
               ),
+              if (_selectedTypeId == 'custom') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _customTypeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: "Navn på format *",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.edit),
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 24),
               const Divider(),
@@ -331,36 +377,91 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              OutlinedButton.icon(
-                icon: Icon(
-                  Icons.access_time,
-                  size: 16,
-                  color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                ),
-                label: Text(
-                  _startTime != null
-                      ? 'Kampstart: ${_startTime!.format(context)}'
-                      : 'Kampstart (ikke satt – tider tildeles ikke automatisk)',
-                  style: TextStyle(
-                    color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                    fontSize: 13,
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: Icon(
+                        Icons.access_time,
+                        size: 16,
+                        color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                      ),
+                      label: Text(
+                        _startTime != null
+                            ? 'Starttid: ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'
+                            : 'Starttid *',
+                        style: TextStyle(
+                          color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                          fontSize: 13,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                          color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                        ),
+                      ),
+                      onPressed: () async {
+                        final t = await showTimePicker(
+                          context: context,
+                          initialTime: _startTime ?? const TimeOfDay(hour: 9, minute: 0),
+                        );
+                        if (t != null) setState(() => _startTime = t);
+                      },
+                    ),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(
-                    color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: Icon(
+                        Icons.access_time,
+                        size: 16,
+                        color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                      ),
+                      label: Text(
+                        _endTime != null
+                            ? 'Sluttid: ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'
+                            : 'Sluttid *',
+                        style: TextStyle(
+                          color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                          fontSize: 13,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                          color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
+                        ),
+                      ),
+                      onPressed: () async {
+                        final t = await showTimePicker(
+                          context: context,
+                          initialTime: _endTime ?? const TimeOfDay(hour: 17, minute: 0),
+                        );
+                        if (t != null) setState(() => _endTime = t);
+                      },
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+
+              // ─── KAPASITET ─────────────────────────────────────────────
+              _section("Kapasitet"),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _maxTotalCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Maks lag totalt",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.group),
                 ),
-                onPressed: () async {
-                  final t = await showTimePicker(
-                    context: context,
-                    initialTime: _startTime ?? const TimeOfDay(hour: 9, minute: 0),
-                  );
-                  if (t != null) setState(() => _startTime = t);
-                },
               ),
               const SizedBox(height: 12),
+
               SwitchListTile(
                 title: const Text("Divisjonsspill",
                     style: TextStyle(fontWeight: FontWeight.w600)),
@@ -560,7 +661,7 @@ class _CategoryAdminDialog extends StatelessWidget {
   void _editCategory(BuildContext context, DocumentSnapshot cat) {
     final d = cat.data() as Map<String, dynamic>;
     final nameCtrl = TextEditingController(text: d['name'] ?? '');
-    int maxTeams = (d['max_teams'] as num?)?.toInt() ?? 24;
+    final maxCtrl = TextEditingController(text: d['max_teams']?.toString() ?? '24');
 
     showDialog(
       context: context,
@@ -576,15 +677,11 @@ class _CategoryAdminDialog extends StatelessWidget {
                     labelText: "Klassenavn", border: OutlineInputBorder()),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: maxTeams,
+              TextField(
+                controller: maxCtrl,
+                keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                     labelText: "Maks lag", border: OutlineInputBorder()),
-                items: [8, 12, 16, 20, 24, 32, 40, 48, 64]
-                    .map((n) =>
-                        DropdownMenuItem(value: n, child: Text("$n lag")))
-                    .toList(),
-                onChanged: (v) => set(() => maxTeams = v ?? maxTeams),
               ),
             ],
           ),
@@ -593,8 +690,9 @@ class _CategoryAdminDialog extends StatelessWidget {
                 onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
             ElevatedButton(
               onPressed: () async {
+                int mt = int.tryParse(maxCtrl.text.trim()) ?? 24;
                 await cat.reference
-                    .update({'name': nameCtrl.text.trim(), 'max_teams': maxTeams});
+                    .update({'name': nameCtrl.text.trim(), 'max_teams': mt});
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text("Lagre"),

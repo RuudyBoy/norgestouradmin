@@ -63,8 +63,12 @@ class AuthGate extends StatelessWidget {
               if (adminSnapshot.hasData && adminSnapshot.data!.exists) {
                 return const AdminDashboard();
               }
-              // Signed in but not an admin — sign out and show login
-              FirebaseAuth.instance.signOut();
+              // Signed in but not an admin — sign out and show login.
+              // signOut() trigger authStateChanges → rebuild, så den må
+              // utsettes til etter build-fasen.
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                FirebaseAuth.instance.signOut();
+              });
               return const AdminLoginPage();
             },
           );

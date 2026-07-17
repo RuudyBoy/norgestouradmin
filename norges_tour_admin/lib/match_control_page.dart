@@ -105,6 +105,10 @@ class _MatchControlPageState extends State<MatchControlPage> {
         'away_sets': aSets,
         'past_sets': pastSets,
         'status': 'finished',
+        // Samme konvensjon som livescore-appen: ferdig kamp lagrer settsifre
+        // i home_score/away_score (leses som sluttresultat i begge apper)
+        'home_score': hSets,
+        'away_score': aSets,
       });
       await _advanceTeamIfPlayoff();
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kampen er ferdig!")));
@@ -218,8 +222,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
     final doc = await FirebaseFirestore.instance.collection('matches').doc(widget.matchId).get();
     final data = doc.data();
     
-    final timeController = TextEditingController(text: data?['start_time'] ?? '');
-    final typeController = TextEditingController(text: data?['group'] ?? '');
+    final timeController = TextEditingController(text: data?['match_time'] ?? data?['start_time'] ?? '');
     final courtController = TextEditingController(text: data?['court'] ?? '');
 
     if (!context.mounted) return;
@@ -237,10 +240,6 @@ class _MatchControlPageState extends State<MatchControlPage> {
                 decoration: const InputDecoration(labelText: "Tidspunkt (f.eks 14:00)"),
               ),
               TextField(
-                controller: typeController,
-                decoration: const InputDecoration(labelText: "Kamp-type (f.eks Finale, Pulje A)"),
-              ),
-              TextField(
                 controller: courtController,
                 decoration: const InputDecoration(labelText: "Bane"),
               ),
@@ -254,8 +253,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
             ElevatedButton(
               onPressed: () {
                 FirebaseFirestore.instance.collection('matches').doc(widget.matchId).update({
-                  'start_time': timeController.text.trim(),
-                  'group': typeController.text.trim(),
+                  'match_time': timeController.text.trim(),
                   'court': courtController.text.trim(),
                 });
                 Navigator.pop(context);

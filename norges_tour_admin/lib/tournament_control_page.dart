@@ -76,8 +76,16 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       final newlyFinished = currentIds.difference(_knownFinishedIds);
       if (newlyFinished.isNotEmpty) {
         _knownFinishedIds = currentIds;
-        // En eller flere kamper ble nettopp avsluttet av livescore-appen
-        _resolvePendingMatches();
+        // En eller flere kamper ble nettopp avsluttet av livescore-appen.
+        // Resolve for klassene kampene tilhører – ikke bare valgt klasse.
+        final affectedCategories = snapshot.docs
+            .where((d) => newlyFinished.contains(d.id))
+            .map((d) => d.data()['category_id'] as String?)
+            .whereType<String>()
+            .toSet();
+        for (final catId in affectedCategories) {
+          _resolvePendingMatches(categoryId: catId);
+        }
       }
     });
   }
@@ -348,9 +356,15 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
     final groupLists = List.generate(numGroups, (_) => <DocumentSnapshot>[]);
     for (int i = 0; i < sorted.length; i++) {
-      final row = i ~/ numGroups;
-      final col = i % numGroups;
-      final groupIdx = (row % 2 == 0) ? col : (numGroups - 1 - col);
+      final divIdx = i ~/ 16;
+      final rankInDiv = i % 16;
+      final groupsInThisDiv = (numGroups - divIdx * 4).clamp(1, 4);
+
+      final row = rankInDiv ~/ groupsInThisDiv;
+      final col = rankInDiv % groupsInThisDiv;
+      final localGroupIdx = (row % 2 == 0) ? col : (groupsInThisDiv - 1 - col);
+
+      final groupIdx = divIdx * 4 + localGroupIdx;
       groupLists[groupIdx].add(sorted[i]);
     }
 
@@ -814,14 +828,15 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   // ─── Auto-resolve: Fyll inn riktige lag etter hvert som resultater kommer ─
 
-  Future<void> _resolvePendingMatches() async {
-    if (_selectedCategoryId == null) return;
+  Future<void> _resolvePendingMatches({String? categoryId}) async {
+    final catId = categoryId ?? _selectedCategoryId;
+    if (catId == null) return;
 
     // Last alle kamper for denne turneringen + klassen
     final allSnap = await FirebaseFirestore.instance
         .collection('matches')
         .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('category_id', isEqualTo: catId)
         .get();
 
     final allMatches = allSnap.docs;
@@ -864,7 +879,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     final teamsSnap = await FirebaseFirestore.instance
         .collection('teams')
         .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+        .where('category_id', isEqualTo: catId)
         .get();
 
     final teamByGroupPlace = <String, Map<String, dynamic>>{};
@@ -1170,7 +1185,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                   await matchDoc.reference.update({
                     'status': 'finished', 'home_score': 1, 'away_score': 0, 'walkover': true,
                   });
-                  await _resolvePendingMatches();
+                  await _resolvePendingMatches(categoryId: d['category_id'] as String?);
                   if (ctx.mounted) { Navigator.pop(ctx); _snack("Walkover – Lag A vinner."); }
                 },
               ),
@@ -1183,7 +1198,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                   await matchDoc.reference.update({
                     'status': 'finished', 'home_score': 0, 'away_score': 1, 'walkover': true,
                   });
-                  await _resolvePendingMatches();
+                  await _resolvePendingMatches(categoryId: d['category_id'] as String?);
                   if (ctx.mounted) { Navigator.pop(ctx); _snack("Walkover – Lag B vinner."); }
                 },
               ),
@@ -1204,7 +1219,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               }
               await matchDoc.reference.update(updates);
               // Resolve downstream kamper hvis resultat er endret
-              if (isFinished) await _resolvePendingMatches();
+              if (isFinished) await _resolvePendingMatches(categoryId: d['category_id'] as String?);
               if (ctx.mounted) { Navigator.pop(ctx); _snack("Kamp oppdatert."); }
             },
             child: const Text("Lagre"),
@@ -2093,13 +2108,19 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           IconButton(
             icon: const Icon(Icons.how_to_reg),
             tooltip: "Påmeldinger",
-            onPressed: () => Navigator.push(context, MaterialPageRoute(
-              builder: (_) => RegistrationsPage(
-                tournamentId: widget.tournamentId,
-                tournamentName: widget.tournamentName,
-                tournamentType: 'nt_master',
-              ),
-            )),
+            onPressed: () async {
+              final doc = await FirebaseFirestore.instance
+                  .collection('tournaments').doc(widget.tournamentId).get();
+              if (!context.mounted) return;
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => RegistrationsPage(
+                  tournamentId: widget.tournamentId,
+                  tournamentName: widget.tournamentName,
+                  tournamentType:
+                      (doc.data()?['tournament_type'] as String?) ?? 'nt_master',
+                ),
+              ));
+            },
           ),
           IconButton(
             icon: const Icon(Icons.edit),

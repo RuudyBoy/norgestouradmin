@@ -35,7 +35,7 @@ const _tournamentTypes = [
     defaultMaxTeamsPerClass: 64,
     defaultDiv1Size: 16,
     rankingCategory: 'NT Master sr',
-    description: 'Norgestour Master – divisjonsspill, 16 lag i 1. div. Maks 64 lag.',
+    description: 'Norgestour Master – divisjonsspill, 16 lag i 1. div.',
   ),
   TournamentTypeConfig(
     id: 'nt_open',
@@ -107,6 +107,16 @@ const _tournamentTypes = [
     rankingCategory: 'RT Open sr og jr',
     description: 'King & Queen of the Court – uten divisjonsspill.',
   ),
+  TournamentTypeConfig(
+    id: 'custom',
+    label: 'Egendefinert format',
+    shortLabel: 'Annet',
+    color: Color(0xFF607D8B),
+    defaultMaxTeamsPerClass: 32,
+    defaultDiv1Size: 0,
+    rankingCategory: 'Annet',
+    description: 'Opprett et helt eget format.',
+  ),
 ];
 
 class AddTournamentPage extends StatefulWidget {
@@ -120,6 +130,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
   final _nameCtrl = TextEditingController();
   final _locationCtrl = TextEditingController();
   final _imageUrlCtrl = TextEditingController();
+  final _maxTotalCtrl = TextEditingController();
+  final _maxPerClassCtrl = TextEditingController();
+  final _customTypeCtrl = TextEditingController();
 
   String _selectedTypeId = 'nt_master';
   int _courtsCount = 6;
@@ -130,6 +143,8 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
   DateTime? _startDate;
   DateTime? _endDate;
   DateTime? _registrationDeadline;
+  TimeOfDay? _startTime;
+  TimeOfDay? _endTime;
 
   // 'men' | 'women' | 'both'
   String _genderSelection = 'both';
@@ -138,10 +153,19 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
       _tournamentTypes.firstWhere((t) => t.id == _selectedTypeId);
 
   @override
+  void initState() {
+    super.initState();
+    _maxPerClassCtrl.text = _selectedType.defaultMaxTeamsPerClass.toString();
+  }
+
+  @override
   void dispose() {
     _nameCtrl.dispose();
     _locationCtrl.dispose();
     _imageUrlCtrl.dispose();
+    _maxTotalCtrl.dispose();
+    _maxPerClassCtrl.dispose();
+    _customTypeCtrl.dispose();
     super.dispose();
   }
 
@@ -152,8 +176,23 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
       _selectedTypeId = newId;
       _hasDivisionPlay = cfg.defaultDiv1Size > 0;
       _div1Size = cfg.defaultDiv1Size > 0 ? cfg.defaultDiv1Size : 8;
-      // Oppdater maks lag i kategorier til ny default hvis de ikke er endret
+      _maxPerClassCtrl.text = cfg.defaultMaxTeamsPerClass.toString();
     });
+  }
+
+  Future<void> _pickTime(String which) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: which == 'start' 
+          ? (_startTime ?? const TimeOfDay(hour: 9, minute: 0)) 
+          : (_endTime ?? const TimeOfDay(hour: 17, minute: 0)),
+    );
+    if (picked != null) {
+      setState(() {
+        if (which == 'start') _startTime = picked;
+        else _endTime = picked;
+      });
+    }
   }
 
   Future<void> _pickDate(String which) async {
@@ -202,29 +241,51 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
   Future<void> _save() async {
     if (_nameCtrl.text.trim().isEmpty ||
         _locationCtrl.text.trim().isEmpty ||
+        _imageUrlCtrl.text.trim().isEmpty ||
         _startDate == null ||
         _endDate == null) {
-      _snack("Fyll ut navn, sted og begge datoer!");
+      _snack("Fyll ut navn, sted, bilde-URL og begge datoer!");
+      return;
+    }
+    if (_selectedTypeId == 'custom' && _customTypeCtrl.text.trim().isEmpty) {
+      _snack("Fyll ut navn på det egendefinerte formatet!");
+      return;
+    }
+    if (_startTime == null || _endTime == null) {
+      _snack("Velg start- og sluttidspunkt for kampene!");
       return;
     }
     if (_registrationDeadline == null) {
       _snack("Sett påmeldingsfrist!");
       return;
     }
+
+    int? maxTotal = int.tryParse(_maxTotalCtrl.text.trim());
+    int? maxPerClass = int.tryParse(_maxPerClassCtrl.text.trim());
+
+    if (maxTotal == null || maxPerClass == null) {
+      _snack("Fyll ut maks lag totalt og maks per klasse med gyldige tall!");
+      return;
+    }
+
     String fmt(DateTime d) =>
         "${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}";
+    String fmtTime(TimeOfDay t) =>
+        "${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}";
 
     try {
-      final tourRef = await FirebaseFirestore.instance.collection('tournaments').add({
+      final tourData = <String, dynamic>{
         'name': _nameCtrl.text.trim(),
         'location': _locationCtrl.text.trim(),
         'start_date': fmt(_startDate!),
         'end_date': fmt(_endDate!),
+        'start_time': fmtTime(_startTime!),
+        'end_time': fmtTime(_endTime!),
         'registration_deadline': fmt(_registrationDeadline!),
         'image_url': _imageUrlCtrl.text.trim(),
         'courts_count': _courtsCount,
         'tournament_type': _selectedTypeId,
-        'tournament_type_label': _selectedType.label,
+        'tournament_type_label': _selectedTypeId == 'custom' ? _customTypeCtrl.text.trim() : _selectedType.label,
         'ranking_category': _selectedType.rankingCategory,
         'match_duration_minutes': _matchDurationMinutes,
         'has_division_play': _hasDivisionPlay,
@@ -232,7 +293,11 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
         'status': 'upcoming',
         'registration_status': 'open',
         'created_at': FieldValue.serverTimestamp(),
-      });
+        'max_teams_per_category': maxPerClass,
+      };
+      tourData['max_teams_total'] = maxTotal;
+
+      final tourRef = await FirebaseFirestore.instance.collection('tournaments').add(tourData);
 
       final batch = FirebaseFirestore.instance.batch();
       for (final name in _categoryNames) {
@@ -240,7 +305,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
         batch.set(catRef, {
           'tournament_id': tourRef.id,
           'name': name,
-          'max_teams': _selectedType.defaultMaxTeamsPerClass,
+          'max_teams': maxPerClass,
           'tournament_type': _selectedTypeId,
           'created_at': FieldValue.serverTimestamp(),
         });
@@ -331,6 +396,17 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     ],
                   ),
                 ),
+                if (_selectedTypeId == 'custom') ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _customTypeCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "Navn på format *",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.edit),
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 28),
                 const Divider(),
@@ -360,14 +436,14 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 TextField(
                   controller: _imageUrlCtrl,
                   decoration: const InputDecoration(
-                    labelText: "Bilde URL (valgfritt)",
+                    labelText: "Bilde URL *",
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.image),
                   ),
                 ),
                 const SizedBox(height: 12),
 
-                // Datoer
+                // Datoer og Tid
                 Row(
                   children: [
                     Expanded(
@@ -400,6 +476,48 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                             Flexible(
                               child: Text(
                                 _endDate == null ? "Sluttdato *" : _fmtDate(_endDate!),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _pickTime('start'),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.access_time, size: 16),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _startTime == null ? "Starttid *" : "${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}",
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _pickTime('end'),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.access_time, size: 16),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _endTime == null ? "Sluttid *" : "${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}",
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
@@ -533,6 +651,41 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     ),
                   ],
                 ],
+
+                const SizedBox(height: 28),
+                const Divider(),
+                const SizedBox(height: 20),
+
+                // ─── KAPASITET ─────────────────────────────────────────────
+                _sectionTitle("Kapasitet & Påmelding"),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _maxTotalCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: "Maks lag totalt *",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.group),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _maxPerClassCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: "Maks lag per klasse",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.group_add),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
 
                 const SizedBox(height: 28),
                 const Divider(),
