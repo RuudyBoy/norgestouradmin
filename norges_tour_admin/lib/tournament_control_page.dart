@@ -35,6 +35,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   String _oppsettStageFilter = 'alle';
   String _oppsettGroupFilter = 'alle';
   String _oppsettCourtFilter = 'alle';
+  String _selectedOppsettTab = 'Gruppespill';
 
   // Lytter på Firestore – oppdager når livescore-appen registrerer resultater
   StreamSubscription<QuerySnapshot>? _finishedMatchListener;
@@ -211,14 +212,33 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
               ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   if (p1Id == null || p2Id == null) { _snack("Velg begge spillere!"); return; }
                   if (p1Id == p2Id) { _snack("Velg to forskjellige spillere!"); return; }
-                  final messenger = ScaffoldMessenger.of(context);
-                  Navigator.pop(ctx);
-
+                  
                   final p1Data = docs.firstWhere((d) => d.id == p1Id).data() as Map<String, dynamic>;
                   final p2Data = docs.firstWhere((d) => d.id == p2Id).data() as Map<String, dynamic>;
+                  
+                  // Validate gender
+                  if (_selectedCategoryId != null) {
+                    final catSnap = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
+                    if (catSnap.exists) {
+                      final catData = catSnap.data() as Map<String, dynamic>;
+                      final catGender = catData['gender'] ?? 'Mix';
+                      if (catGender != 'Mix') {
+                        final g1 = p1Data['gender'] ?? 'M';
+                        final g2 = p2Data['gender'] ?? 'M';
+                        if (g1 != catGender || g2 != catGender) {
+                          _snack("Feil: Begge spillere må være ${catGender == 'M' ? 'menn' : 'kvinner'} for denne klassen!", isError: true);
+                          return;
+                        }
+                      }
+                    }
+                  }
+
+                  final messenger = ScaffoldMessenger.of(context);
+                  if (ctx.mounted) Navigator.pop(ctx);
+
                   final pts1 = (p1Data['ranking_points'] as num?)?.toInt() ?? 0;
                   final pts2 = (p2Data['ranking_points'] as num?)?.toInt() ?? 0;
 
@@ -245,10 +265,20 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   Future<void> _autoGenerateTeams() async {
     if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    
+    final catSnap = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
+    final catGender = catSnap.data()?['gender'] ?? 'Mix';
+
     final snap = await FirebaseFirestore.instance.collection('players').get();
-    final players = snap.docs.toList()..shuffle();
+    var players = snap.docs.toList();
+    
+    if (catGender != 'Mix') {
+      players = players.where((p) => (p.data()['gender'] ?? 'M') == catGender).toList();
+    }
+    players.shuffle();
+
     if (players.length < 32) {
-      _snack("Trenger minst 32 spillere i databasen (har ${players.length}).", isError: true);
+      _snack("Trenger minst 32 spillere av riktig kjønn i databasen (har ${players.length}).", isError: true);
       return;
     }
     final batch = FirebaseFirestore.instance.batch();
@@ -300,9 +330,20 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       content: Column(mainAxisSize: MainAxisSize.min, children: [
         Text("$a vs $b", textAlign: TextAlign.center),
         const SizedBox(height: 16),
-        SizedBox(height: 200, width: 200, child: QrImageView(data: url, version: QrVersions.auto, size: 200)),
-        const SizedBox(height: 12),
-        SelectableText(url, style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              SizedBox(height: 200, width: 200, child: QrImageView(data: url, version: QrVersions.auto, size: 200)),
+              const SizedBox(height: 12),
+              SelectableText(url, style: const TextStyle(fontSize: 10, color: AppColors.adminSurface)),
+            ],
+          ),
+        ),
       ]),
       actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Lukk"))],
     ));
@@ -457,11 +498,15 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         final startMinutes = (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts[1]) ?? 0);
         final duration = (td['match_duration_minutes'] as num?)?.toInt() ?? 60;
         final courts = (td['courts_count'] as num?)?.toInt() ?? 4;
+        final startDate = td['start_date'] as String? ?? 'Kampdag';
+        final endDate = td['end_date'] as String? ?? startDate;
         await _autoScheduleForCategory(
           _selectedCategoryId!,
           startMinutes: startMinutes,
           matchDurationMinutes: duration,
           courtsCount: courts,
+          startDate: startDate,
+          endDate: endDate,
         );
         _snack("Kampskjema tildelt automatisk fra $startTimeStr.");
       }
@@ -994,6 +1039,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     required int startMinutes,
     required int matchDurationMinutes,
     required int courtsCount,
+    required String startDate,
+    required String endDate,
     int breakBetweenRounds = 5,
   }) async {
     final snap = await FirebaseFirestore.instance
@@ -1020,9 +1067,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     }
 
     final batch = FirebaseFirestore.instance.batch();
-    int currentMinutes = startMinutes;
+    int currentMinutesDay1 = startMinutes;
+    int currentMinutesDay2 = startMinutes;
 
     for (final roundOrder in (byRound.keys.toList()..sort())) {
+      final isDay2 = (startDate != endDate) && (roundOrder >= 10);
+      final matchDate = isDay2 ? endDate : startDate;
+      int currentMinutes = isDay2 ? currentMinutesDay2 : currentMinutesDay1;
+      
       final roundMatches = byRound[roundOrder]!;
       final numSlots = (roundMatches.length / courtsCount).ceil();
       for (int slot = 0; slot < numSlots; slot++) {
@@ -1033,11 +1085,16 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           batch.update(roundMatches[idx].reference, {
             'court': 'Bane ${court + 1}',
             'match_time': _fmtMinutes(slotMinutes),
+            'match_date': matchDate,
             'scheduled_minutes': slotMinutes,
           });
         }
       }
-      currentMinutes += numSlots * matchDurationMinutes + breakBetweenRounds;
+      if (isDay2) {
+        currentMinutesDay2 += numSlots * matchDurationMinutes + breakBetweenRounds;
+      } else {
+        currentMinutesDay1 += numSlots * matchDurationMinutes + breakBetweenRounds;
+      }
     }
 
     await batch.commit();
@@ -2122,21 +2179,6 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               ));
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.edit),
-            tooltip: "Rediger turnering",
-            onPressed: () async {
-              final doc = await FirebaseFirestore.instance
-                  .collection('tournaments').doc(widget.tournamentId).get();
-              if (!context.mounted) return;
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => EditTournamentPage(
-                  tournamentId: widget.tournamentId,
-                  initialData: doc.data() ?? {},
-                ),
-              ));
-            },
-          ),
           PopupMenuButton<String>(
             tooltip: "Avanserte handlinger",
             icon: const Icon(Icons.more_vert),
@@ -2816,30 +2858,83 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
             final hasPlayoffs = allMatches.any((m) => (m.data() as Map)['stage'] == 'playoff');
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildSeedingCard(sortedTeams, hasMatches),
-                  const SizedBox(height: 16),
-                  if (!hasMatches) ...[
-                    _buildGenerateCard(),
-                    const SizedBox(height: 16),
-                  ] else ...[
-                    _buildPublishCard(),
-                    const SizedBox(height: 16),
-                    if (sortedGroups.isNotEmpty) ...[
-                      _buildGroupPreviewCard(groupTeams, sortedGroups),
-                      const SizedBox(height: 16),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Top sub-menu bar
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  decoration: const BoxDecoration(
+                    color: AppColors.adminSurfaceElevated,
+                  ),
+                  child: Row(
+                    children: [
+                      _buildOppsettSubTab('Gruppespill'),
+                      const SizedBox(width: 8),
+                      _buildOppsettSubTab('Sluttspill'),
+                      const SizedBox(width: 8),
+                      _buildOppsettSubTab('Seeding'),
+                      
+                      const Spacer(),
+                      
+                      if (hasMatches) ...[
+                        _buildPublishButtonInline(),
+                        const SizedBox(width: 12),
+                      ],
+                      
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.edit, size: 16),
+                        label: const Text("Rediger turnering"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.adminSurface,
+                          foregroundColor: AppColors.adminOrange,
+                          elevation: 0,
+                          side: const BorderSide(color: AppColors.adminOrange),
+                        ),
+                        onPressed: () async {
+                          final doc = await FirebaseFirestore.instance
+                              .collection('tournaments').doc(widget.tournamentId).get();
+                          if (!context.mounted) return;
+                          Navigator.push(context, MaterialPageRoute(
+                            builder: (_) => EditTournamentPage(
+                              tournamentId: widget.tournamentId,
+                              initialData: doc.data() ?? {},
+                            ),
+                          ));
+                        },
+                      ),
                     ],
-                    if (hasPlayoffs) ...[
-                      _buildPlayoffPreviewCard(allMatches, matchNumById),
-                      const SizedBox(height: 16),
-                    ],
-                  ],
-                ],
-              ),
+                  ),
+                ),
+                // Tab content
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!hasMatches) ...[
+                          _buildSeedingCard(sortedTeams, hasMatches),
+                          const SizedBox(height: 16),
+                          _buildGenerateCard(),
+                        ] else ...[
+                          if (_selectedOppsettTab == 'Seeding')
+                            _buildSeedingCard(sortedTeams, hasMatches),
+                            
+                          if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
+                            _buildGroupPreviewCard(groupTeams, sortedGroups),
+                            
+                          if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
+                            _buildPlayoffPreviewCard(allMatches, matchNumById),
+                            
+                          if (_selectedOppsettTab != 'Seeding' && _selectedOppsettTab != 'Gruppespill' && _selectedOppsettTab != 'Sluttspill')
+                            const Center(child: Text("Ingen kamper i denne visningen.")),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             );
           },
         );
@@ -3087,7 +3182,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  Widget _buildPublishCard() {
+  Widget _buildPublishButtonInline() {
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
           .collection('categories')
@@ -3098,80 +3193,54 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         final d = snap.data!.data() as Map<String, dynamic>? ?? {};
         final isPublished = d['published'] as bool? ?? false;
 
-        return Card(
-          elevation: 2,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(children: [
-                  const Icon(Icons.publish, color: AppColors.adminOrange, size: 24),
-                  const SizedBox(width: 12),
-                  const Text("Publisering",
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: isPublished
-                          ? AppColors.green.withValues(alpha: 0.15)
-                          : AppColors.adminSurfaceElevated,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(
-                        isPublished ? Icons.check_circle : Icons.lock_outline,
-                        size: 14,
-                        color: isPublished ? AppColors.green : AppColors.adminTextSecondary,
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        isPublished ? "Publisert" : "Upublisert",
-                        style: TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.bold,
-                          color: isPublished ? AppColors.green : AppColors.adminTextSecondary,
-                        ),
-                      ),
-                    ]),
-                  ),
-                ]),
-                const SizedBox(height: 10),
-                Text(
-                  isPublished
-                      ? "Kampoppsettet er synlig for alle brukere i appen."
-                      : "Oppsettet er klart. Trykk for å publisere – da blir kampprogram og puljer synlig for alle i appen.",
-                  style: const TextStyle(fontSize: 13, color: AppColors.adminTextSecondary),
-                ),
-                const SizedBox(height: 16),
-                if (!isPublished)
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.check_circle, size: 18),
-                    label: const Text("Bekreft og publiser oppsett"),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                      backgroundColor: AppColors.green,
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: _publishCategory,
-                  )
-                else
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.lock_outline, size: 18),
-                    label: const Text("Avpubliser (skjul fra appen)"),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.adminTextSecondary,
-                      side: const BorderSide(color: AppColors.adminSurfaceElevated),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    onPressed: _unpublishCategory,
-                  ),
-              ],
+        if (!isPublished) {
+          return ElevatedButton.icon(
+            icon: const Icon(Icons.check_circle, size: 16),
+            label: const Text("Publiser turnering offentlig"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.green,
+              foregroundColor: Colors.white,
+              elevation: 0,
             ),
-          ),
-        );
+            onPressed: _publishCategory,
+          );
+        } else {
+          return OutlinedButton.icon(
+            icon: const Icon(Icons.lock_outline, size: 16),
+            label: const Text("Avpubliser"),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.adminTextSecondary,
+              side: const BorderSide(color: AppColors.adminSurfaceElevated),
+            ),
+            onPressed: _unpublishCategory,
+          );
+        }
       },
+    );
+  }
+
+  Widget _buildOppsettSubTab(String title) {
+    final isSelected = _selectedOppsettTab == title;
+    return InkWell(
+      onTap: () => setState(() => _selectedOppsettTab = title),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.adminOrange.withValues(alpha: 0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppColors.adminOrange : Colors.transparent,
+          ),
+        ),
+        child: Text(
+          title,
+          style: TextStyle(
+            color: isSelected ? AppColors.adminOrange : AppColors.adminTextSecondary,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
     );
   }
 

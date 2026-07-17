@@ -29,6 +29,11 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
     final validPositions = ["Blokker", "Forsvar", "Allround"];
     if (!validPositions.contains(selectedPosition)) selectedPosition = null;
 
+    String selectedGender = existingData?['gender']?.toString() ?? 'M';
+    if (selectedGender != 'M' && selectedGender != 'K') {
+      selectedGender = 'M';
+    }
+
     showDialog(
       context: context,
       builder: (context) {
@@ -75,11 +80,33 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     const SizedBox(height: 16),
                     TextField(controller: rankingPointsController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Rankingpoeng")),
                     const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedPosition,
-                      decoration: const InputDecoration(labelText: "Posisjon"),
-                      items: validPositions.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                      onChanged: (val) => selectedPosition = val,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: selectedGender,
+                            decoration: const InputDecoration(labelText: "Kjønn"),
+                            items: const [
+                              DropdownMenuItem(value: 'M', child: Text("Mann")),
+                              DropdownMenuItem(value: 'K', child: Text("Kvinne")),
+                            ],
+                            onChanged: (val) {
+                              if (val != null) selectedGender = val;
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: selectedPosition,
+                            decoration: const InputDecoration(labelText: "Posisjon"),
+                            items: validPositions.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                            onChanged: (val) {
+                              selectedPosition = val;
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     
@@ -117,6 +144,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                         'first_name': firstNameController.text,
                         'last_name': lastNameController.text,
                         'club': clubController.text,
+                        'gender': selectedGender,
                         'height': height,
                         'position': selectedPosition ?? 'Ukjent',
                         'image_url': imageUrlController.text, // Lagrer bare teksten (URLen)
@@ -193,6 +221,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                 batch.update(doc.reference, {
                   'first_name': newFirst,
                   'last_name': newLast,
+                  'gender': nameIndex % 2 == 0 ? 'M' : 'K',
                 });
               }
 
@@ -203,6 +232,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                   "first_name": dummyFirstNames[(i + 7) % dummyFirstNames.length],
                   "last_name": dummyLastNames[(i + 13) % dummyLastNames.length],
                   "club": "Tulleklubb IL",
+                  "gender": i % 2 == 0 ? 'M' : 'K',
                   "height": 180 + (i % 20),
                   "position": i % 2 == 0 ? "Blokker" : "Forsvar",
                   "top_3": i * 2,
@@ -215,6 +245,37 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
 
               await batch.commit();
               scaffold.showSnackBar(const SnackBar(content: Text("Anonymisert eksisterende og lagt til 20 tullespillere!")));
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
+            tooltip: "Slett alle spillere (Test)",
+            onPressed: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text("Slett alle spillere?"),
+                  content: const Text("Dette vil tømme databasen for spillere. Er du sikker?"),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text("Slett alt"),
+                    ),
+                  ],
+                ),
+              );
+              if (ok == true) {
+                final scaffold = ScaffoldMessenger.of(context);
+                final snap = await FirebaseFirestore.instance.collection('players').get();
+                WriteBatch batch = FirebaseFirestore.instance.batch();
+                for (var doc in snap.docs) {
+                  batch.delete(doc.reference);
+                }
+                await batch.commit();
+                scaffold.showSnackBar(const SnackBar(content: Text("Alle spillere ble slettet!")));
+              }
             },
           ),
           IconButton(

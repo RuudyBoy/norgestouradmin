@@ -241,10 +241,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
   Future<void> _save() async {
     if (_nameCtrl.text.trim().isEmpty ||
         _locationCtrl.text.trim().isEmpty ||
-        _imageUrlCtrl.text.trim().isEmpty ||
         _startDate == null ||
         _endDate == null) {
-      _snack("Fyll ut navn, sted, bilde-URL og begge datoer!");
+      _snack("Fyll ut navn, sted og begge datoer!");
       return;
     }
     if (_selectedTypeId == 'custom' && _customTypeCtrl.text.trim().isEmpty) {
@@ -305,6 +304,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
         batch.set(catRef, {
           'tournament_id': tourRef.id,
           'name': name,
+          'gender': name.toLowerCase().contains('dame') || name.toLowerCase().contains('kvinne') ? 'K' : 'M',
           'max_teams': maxPerClass,
           'tournament_type': _selectedTypeId,
           'created_at': FieldValue.serverTimestamp(),
@@ -436,7 +436,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 TextField(
                   controller: _imageUrlCtrl,
                   decoration: const InputDecoration(
-                    labelText: "Bilde URL *",
+                    labelText: "Bilde URL (valgfritt)",
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.image),
                   ),
@@ -498,7 +498,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                             const SizedBox(width: 8),
                             Flexible(
                               child: Text(
-                                _startTime == null ? "Starttid *" : "${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}",
+                                _startTime == null ? "Starttid (per dag) *" : "${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}",
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
@@ -517,7 +517,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                             const SizedBox(width: 8),
                             Flexible(
                               child: Text(
-                                _endTime == null ? "Sluttid *" : "${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}",
+                                _endTime == null ? "Sluttid (per dag) *" : "${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}",
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
@@ -526,6 +526,11 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  "Start- og sluttid gjelder for hver kampdag. Ved fler-dagers turnering spilles gruppespill og omspill dag 1, og sluttspill fra 1/16-delsfinaler og utover på dag 2.",
+                  style: TextStyle(fontSize: 12, color: AppColors.adminTextSecondary),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton(

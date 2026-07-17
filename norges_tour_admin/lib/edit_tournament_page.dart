@@ -388,8 +388,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                       ),
                       label: Text(
                         _startTime != null
-                            ? 'Starttid: ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'
-                            : 'Starttid *',
+                            ? 'Starttid (per dag): ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'
+                            : 'Starttid (per dag) *',
                         style: TextStyle(
                           color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
                           fontSize: 13,
@@ -420,8 +420,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                       ),
                       label: Text(
                         _endTime != null
-                            ? 'Sluttid: ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'
-                            : 'Sluttid *',
+                            ? 'Sluttid (per dag): ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'
+                            : 'Sluttid (per dag) *',
                         style: TextStyle(
                           color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
                           fontSize: 13,
@@ -443,6 +443,11 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                "Start- og sluttid gjelder for hver kampdag. Ved fler-dagers turnering spilles gruppespill og omspill dag 1, og sluttspill fra 1/16-delsfinaler og utover på dag 2.",
+                style: TextStyle(fontSize: 12, color: AppColors.adminTextSecondary),
               ),
               const SizedBox(height: 24),
               const Divider(),
@@ -662,6 +667,7 @@ class _CategoryAdminDialog extends StatelessWidget {
     final d = cat.data() as Map<String, dynamic>;
     final nameCtrl = TextEditingController(text: d['name'] ?? '');
     final maxCtrl = TextEditingController(text: d['max_teams']?.toString() ?? '24');
+    String selectedGender = d['gender'] ?? 'Mix';
 
     showDialog(
       context: context,
@@ -683,6 +689,18 @@ class _CategoryAdminDialog extends StatelessWidget {
                 decoration: const InputDecoration(
                     labelText: "Maks lag", border: OutlineInputBorder()),
               ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: ['M', 'K', 'Mix'].contains(selectedGender) ? selectedGender : 'Mix',
+                decoration: const InputDecoration(
+                    labelText: "Kjønn (krav)", border: OutlineInputBorder()),
+                items: const [
+                  DropdownMenuItem(value: 'M', child: Text("Menn")),
+                  DropdownMenuItem(value: 'K', child: Text("Kvinner")),
+                  DropdownMenuItem(value: 'Mix', child: Text("Mix (Åpen)")),
+                ],
+                onChanged: (v) => set(() => selectedGender = v ?? 'Mix'),
+              ),
             ],
           ),
           actions: [
@@ -691,8 +709,11 @@ class _CategoryAdminDialog extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 int mt = int.tryParse(maxCtrl.text.trim()) ?? 24;
-                await cat.reference
-                    .update({'name': nameCtrl.text.trim(), 'max_teams': mt});
+                await cat.reference.update({
+                  'name': nameCtrl.text.trim(),
+                  'max_teams': mt,
+                  'gender': selectedGender,
+                });
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text("Lagre"),
@@ -729,6 +750,7 @@ class _CategoryAdminDialog extends StatelessWidget {
   void _addCategory(BuildContext context) {
     final nameCtrl = TextEditingController();
     int maxTeams = 24;
+    String selectedGender = 'Mix';
 
     showDialog(
       context: context,
@@ -755,6 +777,18 @@ class _CategoryAdminDialog extends StatelessWidget {
                     .toList(),
                 onChanged: (v) => set(() => maxTeams = v ?? maxTeams),
               ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedGender,
+                decoration: const InputDecoration(
+                    labelText: "Kjønn (krav)", border: OutlineInputBorder()),
+                items: const [
+                  DropdownMenuItem(value: 'M', child: Text("Menn")),
+                  DropdownMenuItem(value: 'K', child: Text("Kvinner")),
+                  DropdownMenuItem(value: 'Mix', child: Text("Mix (Åpen)")),
+                ],
+                onChanged: (v) => set(() => selectedGender = v ?? 'Mix'),
+              ),
             ],
           ),
           actions: [
@@ -767,6 +801,7 @@ class _CategoryAdminDialog extends StatelessWidget {
                 await FirebaseFirestore.instance.collection('categories').add({
                   'tournament_id': tournamentId,
                   'name': name,
+                  'gender': selectedGender,
                   'max_teams': maxTeams,
                   'created_at': FieldValue.serverTimestamp(),
                 });
