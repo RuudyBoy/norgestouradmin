@@ -196,9 +196,11 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
             tooltip: "Gjør alle anonyme & legg til 20 tullespillere",
             onPressed: () async {
               final scaffold = ScaffoldMessenger.of(context);
+              final random = Random();
               
-              final dummyFirstNames = ["Lars", "Kari", "Peder", "Marte", "Ola", "Espen", "Kåre", "Siri", "Jens", "Nina", "Bjarne", "Hanne", "Simen", "Trine", "Tore", "Lise", "Gisle", "Berit", "Knut", "Inger"];
-              final dummyLastNames = ["Luring", "Karusell", "Ås", "Kirkerud", "Nordmann", "Askeladd", "Bentsen", "Snekker", "Jensen", "Nansen", "Betjent", "Håp", "Svingen", "Trapp", "Tang", "Lotte", "Gris", "Brun", "Knoph", "Isaksen"];
+              final maleNames = ["Lars", "Peder", "Ola", "Espen", "Kåre", "Jens", "Bjarne", "Simen", "Tore", "Gisle", "Knut", "Arne", "Bjørn", "Per", "Ole", "Hans", "Nils", "Jan", "Kjell", "Svein", "Geir", "Morten"];
+              final femaleNames = ["Kari", "Marte", "Siri", "Nina", "Hanne", "Trine", "Lise", "Berit", "Inger", "Anna", "Eva", "Ida", "Linda", "Hilde", "Marianne", "Anita", "Bente", "Mona", "Heidi", "Tone"];
+              final lastNames = ["Luring", "Karusell", "Ås", "Kirkerud", "Nordmann", "Askeladd", "Bentsen", "Snekker", "Jensen", "Nansen", "Betjent", "Håp", "Svingen", "Trapp", "Tang", "Lotte", "Gris", "Brun", "Knoph", "Isaksen", "Hansen", "Johansen", "Olsen", "Larsen", "Andersen", "Nilsen", "Pedersen", "Kristiansen", "Johnsen", "Karlsen"];
 
               WriteBatch batch = FirebaseFirestore.instance.batch();
               
@@ -214,30 +216,35 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                   continue; // La denne stå
                 }
                 
-                final newFirst = dummyFirstNames[nameIndex % dummyFirstNames.length];
-                final newLast = dummyLastNames[(nameIndex + 5) % dummyLastNames.length];
+                final isMale = nameIndex % 2 == 0;
+                final newFirst = isMale ? maleNames[random.nextInt(maleNames.length)] : femaleNames[random.nextInt(femaleNames.length)];
+                final newLast = lastNames[random.nextInt(lastNames.length)];
                 nameIndex++;
                 
                 batch.update(doc.reference, {
                   'first_name': newFirst,
                   'last_name': newLast,
-                  'gender': nameIndex % 2 == 0 ? 'M' : 'K',
+                  'gender': isMale ? 'M' : 'K',
                 });
               }
 
-              // 2. Legg til 20 nye tullespillere
+              // 2. Legg til 20 nye tullespillere (10 menn, 10 kvinner)
               for (int i = 0; i < 20; i++) {
+                final isMale = i < 10;
+                final fName = isMale ? maleNames[random.nextInt(maleNames.length)] : femaleNames[random.nextInt(femaleNames.length)];
+                final lName = lastNames[random.nextInt(lastNames.length)];
+                
                 var docRef = FirebaseFirestore.instance.collection('players').doc();
                 batch.set(docRef, {
-                  "first_name": dummyFirstNames[(i + 7) % dummyFirstNames.length],
-                  "last_name": dummyLastNames[(i + 13) % dummyLastNames.length],
+                  "first_name": fName,
+                  "last_name": lName,
                   "club": "Tulleklubb IL",
-                  "gender": i % 2 == 0 ? 'M' : 'K',
-                  "height": 180 + (i % 20),
-                  "position": i % 2 == 0 ? "Blokker" : "Forsvar",
-                  "top_3": i * 2,
-                  "first_places": i,
-                  "ranking_points": 1000 + (i * 100),
+                  "gender": isMale ? 'M' : 'K',
+                  "height": 180 + random.nextInt(20),
+                  "position": random.nextBool() ? "Blokker" : "Forsvar",
+                  "top_3": random.nextInt(10),
+                  "first_places": random.nextInt(5),
+                  "ranking_points": 500 + random.nextInt(1500),
                   "created_at": FieldValue.serverTimestamp(),
                   "image_url": "",
                 });
