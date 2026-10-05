@@ -70,12 +70,15 @@ class AppColors {
     colors: [Color(0xFF24365E), Color(0xFF0B1B33)],
   );
 
-  // ── Admin Specific Theme ──────────────────────────────────────
-  static const Color adminBg = Color(0xFF060B19);
-  static const Color adminSurface = Color(0xFF14203D);
-  static const Color adminSurfaceElevated = Color(0xFF1E2E54);
-  static const Color adminOrange = Color(0xFFFF7A00);
-  static const Color adminOrangeHover = Color(0xFFEA580C);
-  static const Color adminText = Color(0xFFFFFFFF);
-  static const Color adminTextSecondary = Color(0xFF9AA1AE);
+  // ── Admin Specific Theme (Light/Clean) ────────────────────────
+  static const Color adminBg = Color(0xFFF4F7FE);
+  static const Color adminSidebarBg = Color(0xFF111C44);
+  static const Color adminSurface = Color(0xFFFFFFFF);
+  static const Color adminSurfaceElevated = Color(0xFFFFFFFF);
+  static const Color adminPrimary = Color(0xFF2563EB);
+  static const Color adminPrimaryHover = Color(0xFF3311DB);
+  static const Color adminText = Color(0xFF111827);
+  static const Color adminTextSecondary = Color(0xFF6B7280);
+  static const Color adminSidebarText = Color(0xFFFFFFFF);
+  static const Color adminSidebarTextSecondary = Color(0xFFA3AED0);
 }

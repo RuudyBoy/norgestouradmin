@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'theme/app_colors.dart';
+import 'theme/responsive_layout.dart';
 
 class RegistrationsPage extends StatefulWidget {
   final String tournamentId;
@@ -48,11 +49,11 @@ class _RegistrationsPageState extends State<RegistrationsPage>
       case 'accepted':
         return AppColors.green;
       case 'waitlist':
-        return AppColors.adminOrange;
+        return AppColors.adminPrimary;
       case 'rejected':
-        return AppColors.adminOrange;
+        return AppColors.adminPrimary;
       default:
-        return AppColors.adminOrange;
+        return AppColors.adminPrimary;
     }
   }
 
@@ -195,8 +196,8 @@ class _RegistrationsPageState extends State<RegistrationsPage>
   }
 
   Color _seedColor(int seed) {
-    if (seed <= 4) return AppColors.adminOrange;
-    if (seed <= 16) return AppColors.adminOrange;
+    if (seed <= 4) return AppColors.adminPrimary;
+    if (seed <= 16) return AppColors.adminPrimary;
     if (seed <= 32) return AppColors.green;
     return AppColors.adminTextSecondary;
   }
@@ -304,13 +305,13 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                   _statChip("Alle", counts['all']!, 'all', AppColors.adminTextSecondary),
                   const SizedBox(width: 6),
                   _statChip(
-                      "Venter", counts['pending']!, 'pending', AppColors.adminOrange),
+                      "Venter", counts['pending']!, 'pending', AppColors.adminPrimary),
                   const SizedBox(width: 6),
                   _statChip("Godkjent", counts['accepted']!, 'accepted',
                       AppColors.green),
                   const SizedBox(width: 6),
                   _statChip("Vente", counts['waitlist']!, 'waitlist',
-                      AppColors.adminOrange),
+                      AppColors.adminPrimary),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.bar_chart),
@@ -367,18 +368,23 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                         ],
                       ),
                     )
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: filtered.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: 6),
-                      itemBuilder: (ctx, i) {
-                        // Finn seed-nummer (kun blant godkjente, sortert)
-                        final doc = filtered[i];
-                        final data =
-                            doc.data() as Map<String, dynamic>;
-                        return _buildRegistrationCard(doc, data, i, all);
-                      },
+                  : ResponsiveContainer.dashboard(
+                      child: GridView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: filtered.length,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: ResponsiveLayout.gridColumns(context, mobile: 1, tablet: 2, desktop: 3, ultrawide: 4),
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          mainAxisExtent: 160,
+                        ),
+                        itemBuilder: (ctx, i) {
+                          // Finn seed-nummer (kun blant godkjente, sortert)
+                          final doc = filtered[i];
+                          final data = doc.data() as Map<String, dynamic>;
+                          return _buildRegistrationCard(doc, data, i, all);
+                        },
+                      ),
                     ),
             ),
           ],
@@ -496,7 +502,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                               child: Text("WC",
                                   style: TextStyle(
                                       fontSize: 10,
-                                      color: AppColors.adminOrangeHover,
+                                      color: AppColors.adminPrimaryHover,
                                       fontWeight: FontWeight.bold)),
                             ),
                         ],
@@ -562,7 +568,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                 if (status != 'waitlist')
                   _actionBtn(
                     "Venteliste",
-                    AppColors.adminOrange,
+                    AppColors.adminPrimary,
                     Icons.hourglass_top,
                     () => _updateStatus(doc.id, 'waitlist'),
                   ),
@@ -570,7 +576,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                 if (status != 'rejected')
                   _actionBtn(
                     "Avvis",
-                    AppColors.adminOrange,
+                    AppColors.adminPrimary,
                     Icons.close,
                     () => _updateStatus(doc.id, 'rejected'),
                   ),
@@ -657,7 +663,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text("Maks $maxTeams lag"),
                 leading: const CircleAvatar(
-                  backgroundColor: AppColors.adminOrange,
+                  backgroundColor: AppColors.adminPrimary,
                   child: Icon(Icons.sports_volleyball,
                       color: AppColors.adminText, size: 18),
                 ),
@@ -705,7 +711,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                   const SizedBox(width: 12),
                   _miniStat("Godkjent", acceptedCount, AppColors.green),
                   const SizedBox(width: 12),
-                  _miniStat("Venter", pendingCount, AppColors.adminOrange),
+                  _miniStat("Venter", pendingCount, AppColors.adminPrimary),
                   const SizedBox(width: 12),
                   _miniStat("Plasser", maxTeams, AppColors.adminTextSecondary),
                 ],

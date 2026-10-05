@@ -8,6 +8,7 @@ import 'registrations_page.dart';
 import 'edit_tournament_page.dart';
 
 import 'theme/app_colors.dart';
+import 'theme/responsive_layout.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -102,8 +103,24 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   void _snack(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: isError ? AppColors.adminOrangeHover : null,
+      backgroundColor: isError ? AppColors.adminPrimaryHover : null,
     ));
+  }
+
+  Query<Map<String, dynamic>> _matchesQuery() {
+    Query<Map<String, dynamic>> q = FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId);
+    if (_selectedCategoryId != 'all' && _selectedCategoryId != null) {
+      q = q.where('category_id', isEqualTo: _selectedCategoryId);
+    }
+    return q;
+  }
+
+  Query<Map<String, dynamic>> _teamsQuery() {
+    Query<Map<String, dynamic>> q = FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId);
+    if (_selectedCategoryId != 'all' && _selectedCategoryId != null) {
+      q = q.where('category_id', isEqualTo: _selectedCategoryId);
+    }
+    return q;
   }
 
   Map<String, dynamic> _buildGroupMatch({
@@ -147,7 +164,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   // ─── Team dialogs ──────────────────────────────────────────────────────────
 
   void _showAddTeamDialog() {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    if (_selectedCategoryId == null || _selectedCategoryId == 'all') { _snack("Velg en spesifikk klasse."); return; }
 
     String? p1Id, p2Id, p1Name, p2Name, p1Short, p2Short;
 
@@ -264,7 +281,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   }
 
   Future<void> _autoGenerateTeams() async {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    if (_selectedCategoryId == null || _selectedCategoryId == 'all') { _snack("Velg en spesifikk klasse."); return; }
     
     final catSnap = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
     final catGender = catSnap.data()?['gender'] ?? 'Mix';
@@ -312,7 +329,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
           onPressed: () {
             FirebaseFirestore.instance.collection('teams').doc(teamId).delete();
             Navigator.pop(ctx);
@@ -357,12 +374,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   // kaller vi _resolvePendingMatches() som fyller inn lagnavnene automatisk.
 
   Future<void> _generateGroupStage() async {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    if (_selectedCategoryId == null || _selectedCategoryId == 'all') { _snack("Velg en spesifikk klasse."); return; }
 
-    final snap = await FirebaseFirestore.instance
-        .collection('teams')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+    final snap = await _teamsQuery()
         .get();
 
     final teams = snap.docs;
@@ -371,10 +385,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       return;
     }
 
-    final existing = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+    final existing = await _matchesQuery()
         .get();
     if (existing.docs.isNotEmpty) {
       _snack("Turnering er allerede satt opp. Nullstill via ⋮-menyen.", isError: true);
@@ -1103,7 +1114,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   // ─── Reset ────────────────────────────────────────────────────────────────
 
   Future<void> _resetTournament() async {
-    if (_selectedCategoryId == null) { _snack("Velg en klasse først."); return; }
+    if (_selectedCategoryId == null || _selectedCategoryId == 'all') { _snack("Velg en spesifikk klasse."); return; }
 
     final ok = await showDialog<bool>(
       context: context,
@@ -1114,7 +1125,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Nullstill"),
           ),
@@ -1124,16 +1135,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     if (ok != true) return;
 
     // Slett ALLE kamper for denne klassen
-    final matchSnap = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+    final matchSnap = await _matchesQuery()
         .get();
 
-    final teamSnap = await FirebaseFirestore.instance
-        .collection('teams')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+    final teamSnap = await _teamsQuery()
         .get();
 
     final batch = FirebaseFirestore.instance.batch();
@@ -1235,9 +1240,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                icon: const Icon(Icons.flag, color: AppColors.adminOrange),
+                icon: const Icon(Icons.flag, color: AppColors.adminPrimary),
                 label: const Text("Walkover – Lag A vinner",
-                    style: TextStyle(color: AppColors.adminOrange)),
+                    style: TextStyle(color: AppColors.adminPrimary)),
                 onPressed: () async {
                   await matchDoc.reference.update({
                     'status': 'finished', 'home_score': 1, 'away_score': 0, 'walkover': true,
@@ -1248,9 +1253,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               ),
               const SizedBox(height: 4),
               OutlinedButton.icon(
-                icon: const Icon(Icons.flag, color: AppColors.adminOrange),
+                icon: const Icon(Icons.flag, color: AppColors.adminPrimary),
                 label: const Text("Walkover – Lag B vinner",
-                    style: TextStyle(color: AppColors.adminOrange)),
+                    style: TextStyle(color: AppColors.adminPrimary)),
                 onPressed: () async {
                   await matchDoc.reference.update({
                     'status': 'finished', 'home_score': 0, 'away_score': 1, 'walkover': true,
@@ -1308,10 +1313,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     String? currentGroup = d['group'] as String?;
     String? selectedGroup = currentGroup;
 
-    final groupsSnap = await FirebaseFirestore.instance
-        .collection('teams')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+    final groupsSnap = await _teamsQuery()
         .get();
 
     final allGroups = groupsSnap.docs
@@ -1399,10 +1401,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       return const Center(child: Text("Velg en klasse i menyen over."));
     }
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('matches')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .where('category_id', isEqualTo: _selectedCategoryId)
+      stream: _matchesQuery()
           .where('stage', isEqualTo: 'playoff')
           .snapshots(),
       builder: (ctx, snap) {
@@ -1416,7 +1415,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.emoji_events, size: 64, color: AppColors.adminOrange),
+                  const Icon(Icons.emoji_events, size: 64, color: AppColors.adminPrimary),
                   const SizedBox(height: 16),
                   const Text("Sluttspill ikke generert ennå.",
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
@@ -1468,8 +1467,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                           style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary)),
                     ),
                     TextButton.icon(
-                      icon: const Icon(Icons.sync, size: 15, color: AppColors.adminOrange),
-                      label: const Text("Sync", style: TextStyle(color: AppColors.adminOrange, fontSize: 12)),
+                      icon: const Icon(Icons.sync, size: 15, color: AppColors.adminPrimary),
+                      label: const Text("Sync", style: TextStyle(color: AppColors.adminPrimary, fontSize: 12)),
                       onPressed: () async {
                         await _resolvePendingMatches();
                         _snack("Bracket synkronisert.");
@@ -1481,7 +1480,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               Container(
                 color: AppColors.adminSurface,
                 child: TabBar(
-                  indicatorColor: AppColors.adminOrange,
+                  indicatorColor: AppColors.adminPrimary,
                   labelColor: AppColors.adminText,
                   unselectedLabelColor: AppColors.adminTextSecondary,
                   tabs: brackets.map((b) => Tab(
@@ -1599,7 +1598,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                     child: Text(
                       roundLabels[topToBottom[ri]] ?? topToBottom[ri].toUpperCase(),
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10,
-                          color: AppColors.adminOrange, letterSpacing: 0.8),
+                          color: AppColors.adminPrimary, letterSpacing: 0.8),
                     ),
                   ),
                 ),
@@ -1669,7 +1668,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     final statusText = isPending ? 'Venter...' : (isFinished ? 'Ferdig' : 'Planlagt');
     final statusColor = isFinished ? AppColors.green
         : isPending ? AppColors.adminTextSecondary
-        : AppColors.adminOrange;
+        : AppColors.adminPrimary;
 
     return Container(
       decoration: BoxDecoration(
@@ -1695,7 +1694,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 children: [
                   Text(
                     num != null ? 'Kamp $num' : '–',
-                    style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 9, color: AppColors.adminPrimary, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
                   if (isFinished)
@@ -1737,21 +1736,29 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   Widget _buildScheduleTab() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('matches')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .snapshots(),
-      builder: (ctx, snap) {
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        var allMatches = snap.data!.docs;
-
-        if (_selectedCategoryId != null) {
-          allMatches = allMatches.where((m) => (m.data() as Map)['category_id'] == _selectedCategoryId).toList();
+      stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+      builder: (ctx, catSnap) {
+        if (!catSnap.hasData) return const Center(child: CircularProgressIndicator());
+        final Map<String, String> catIdToName = {};
+        for (var c in catSnap.data!.docs) {
+          final data = c.data() as Map<String, dynamic>;
+          catIdToName[c.id] = data['name'] ?? 'Ukjent';
         }
 
-        if (allMatches.isEmpty) {
-          return const Center(child: Text("Ingen kamper for valgt klasse.", style: TextStyle(color: AppColors.adminTextSecondary)));
-        }
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('matches')
+              .where('tournament_id', isEqualTo: widget.tournamentId)
+              .snapshots(),
+          builder: (ctx2, snap) {
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            var allMatches = snap.data!.docs;
+
+            if (_selectedCategoryId != null && _selectedCategoryId != 'all') {
+              allMatches = allMatches.where((m) => (m.data() as Map)['category_id'] == _selectedCategoryId).toList();
+            }
+
+
 
         // Pakk ut unike runder og baner for filter-boblene
         final Set<String> rounds = {};
@@ -1767,8 +1774,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
              if (g.isNotEmpty) rounds.add('Pulje $g');
            } else if (stage == 'playoff') {
              final r = d['round'] as String? ?? '';
-             if (r == 'r16') rounds.add('1/16');
-             else if (r == 'r8') rounds.add('1/8');
+             if (r == 'r16') {
+               rounds.add('1/16');
+             } else if (r == 'r8') rounds.add('1/8');
              else if (r == 'qf') rounds.add('Kvart');
              else if (r == 'sf') rounds.add('Semi');
              else if (r == 'final') rounds.add('Finale');
@@ -1792,8 +1800,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                roundLabel = 'Pulje $g';
              } else if (stage == 'playoff') {
                final r = d['round'] as String? ?? '';
-               if (r == 'r16') roundLabel = '1/16';
-               else if (r == 'r8') roundLabel = '1/8';
+               if (r == 'r16') {
+                 roundLabel = '1/16';
+               } else if (r == 'r8') roundLabel = '1/8';
                else if (r == 'qf') roundLabel = 'Kvart';
                else if (r == 'sf') roundLabel = 'Semi';
                else if (r == 'final') roundLabel = 'Finale';
@@ -1861,6 +1870,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                       child: Row(
                         children: [
+                          _buildInlineCategoryFilter(),
+                          const SizedBox(width: 8),
                           filterChip('Alle', 'alle', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
                           filterChip('Live', 'live', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
                           filterChip('Kommende', 'scheduled', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
@@ -1904,16 +1915,18 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 itemCount: sortedDates.length,
                 itemBuilder: (ctx, i) =>
-                    _buildDaySection(sortedDates[i], byDate[sortedDates[i]]!, matchNumById),
+                    _buildDaySection(sortedDates[i], byDate[sortedDates[i]]!, matchNumById, catIdToName),
               ),
             ),
           ],
         );
       },
     );
+      },
+    );
   }
 
-  Widget _buildDaySection(String date, List<DocumentSnapshot> matches, Map<String, int> matchNumById) {
+  Widget _buildDaySection(String date, List<DocumentSnapshot> matches, Map<String, int> matchNumById, Map<String, String> catIdToName) {
     final Map<String, List<DocumentSnapshot>> byTime = {};
     for (final m in matches) {
       final time = (m.data() as Map)['match_time'] as String? ?? '--:--';
@@ -1953,7 +1966,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(time,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.adminOrange)),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.adminPrimary)),
                   ),
                   Expanded(child: Container(height: 1, margin: const EdgeInsets.only(left: 10), color: AppColors.adminSurfaceElevated)),
                 ],
@@ -1963,7 +1976,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Wrap(
                 spacing: 8, runSpacing: 8,
-                children: byTime[time]!.map((m) => _buildScheduleCard(m, matchNumById)).toList(),
+                children: byTime[time]!.map((m) => _buildScheduleCard(m, matchNumById, catIdToName)).toList(),
               ),
             ),
           ],
@@ -1973,7 +1986,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById) {
+  Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById, Map<String, String> catIdToName) {
     final d = matchDoc.data() as Map<String, dynamic>;
     final matchNum = matchNumById[matchDoc.id] ?? (d['match_number'] as int?);
     final stage = d['stage'] as String? ?? '';
@@ -1986,17 +1999,20 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     final isLive = status == 'live';
     final isPending = status == 'pending';
     final isWalkover = d['walkover'] as bool? ?? false;
+    
+    final catId = d['category_id'] as String? ?? '';
+    final catName = catIdToName[catId] ?? '';
 
-    String stageLabel = '';
+    String stageLabel = catName.isNotEmpty ? '$catName - ' : '';
     if (stage == 'group') {
       final mType = d['match_type'] as String? ?? '';
       final matchLabel = {'group_match_1':' – K1','group_match_2':' – K2','group_match_3':' – K3','group_match_4':' – K4'}[mType] ?? '';
-      stageLabel = 'Pulje $group$matchLabel';
+      stageLabel += 'Pulje $group$matchLabel';
     }
     if (stage == 'playoff') {
       final bl = bracket?.toUpperCase() ?? '';
       final rl = const {'r16':'R16','qf':'KF','sf':'SF','final':'Finale'}[round] ?? '';
-      stageLabel = '$bl-Bracket $rl';
+      stageLabel += '$bl-Bracket $rl';
     }
 
     final teamA = _resolveTeamDisplayName(d, 'team_a', matchNumById);
@@ -2038,7 +2054,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     } else if (isPending) {
       statusLabel = 'Venter...';
     } else if (delayMinutes != null && delayMinutes > 0) {
-      statusColor = AppColors.adminOrangeHover;
+      statusColor = AppColors.adminPrimaryHover;
       statusLabel = '+${delayMinutes}min';
     }
 
@@ -2084,7 +2100,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               child: Row(children: [
                 if (matchNum != null) ...[
                   Text('K$matchNum',
-                      style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                      style: const TextStyle(fontSize: 9, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)),
                   const SizedBox(width: 5),
                 ],
                 Expanded(
@@ -2096,7 +2112,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                   decoration: BoxDecoration(color: AppColors.adminSurfaceElevated, borderRadius: BorderRadius.circular(4)),
                   child: Text(court,
-                      style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                      style: const TextStyle(fontSize: 9, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)),
                 ),
               ]),
             ),
@@ -2109,7 +2125,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: isFinished ? 13 : 11, fontWeight: FontWeight.bold,
-                  color: isFinished ? AppColors.green : AppColors.adminOrange,
+                  color: isFinished ? AppColors.green : AppColors.adminPrimary,
                 ),
               ),
             ),
@@ -2190,7 +2206,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               const PopupMenuItem(
                 value: 'sync',
                 child: ListTile(
-                  leading: Icon(Icons.sync, color: AppColors.adminOrange),
+                  leading: Icon(Icons.sync, color: AppColors.adminPrimary),
                   title: Text("Sync bracket"),
                   subtitle: Text("Oppdater kryssninger manuelt", style: TextStyle(fontSize: 11)),
                   dense: true,
@@ -2200,7 +2216,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               const PopupMenuItem(
                 value: 'reset',
                 child: ListTile(
-                  leading: Icon(Icons.restart_alt, color: AppColors.adminOrange),
+                  leading: Icon(Icons.restart_alt, color: AppColors.adminPrimary),
                   title: Text("Nullstill hele turneringen"),
                   subtitle: Text("Sletter alle kamper, beholder lag", style: TextStyle(fontSize: 11)),
                   dense: true,
@@ -2212,47 +2228,63 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       ),
       body: Column(
         children: [
-          _buildCategorySelector(),
           Expanded(
             child: Row(
               children: [
-                NavigationRail(
-                  backgroundColor: AppColors.adminSurface,
-                  selectedIndex: _selectedNavIndex,
-                  onDestinationSelected: (i) => setState(() => _selectedNavIndex = i),
-                  labelType: NavigationRailLabelType.all,
-                  selectedIconTheme: const IconThemeData(color: AppColors.adminOrange),
-                  selectedLabelTextStyle: const TextStyle(
-                    color: AppColors.adminOrange, fontWeight: FontWeight.bold, fontSize: 12),
-                  unselectedIconTheme: const IconThemeData(color: AppColors.adminTextSecondary),
-                  unselectedLabelTextStyle: const TextStyle(
-                    color: AppColors.adminTextSecondary, fontSize: 12),
-                  destinations: const [
-                    NavigationRailDestination(
-                      icon: Icon(Icons.dashboard),
-                      label: Text("Oversikt"),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.schedule),
-                      label: Text("Kampprogram"),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.account_tree),
-                      label: Text("Oppsett"),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.groups),
-                      label: Text("Lag"),
-                    ),
-                  ],
-                ),
-                const VerticalDivider(width: 1, thickness: 1),
+                if (ResponsiveLayout.getBreakpoint(context).index >= ResponsiveBreakpoint.tablet.index)
+                  NavigationRail(
+                    backgroundColor: AppColors.adminSurface,
+                    selectedIndex: _selectedNavIndex,
+                    onDestinationSelected: (i) => setState(() => _selectedNavIndex = i),
+                    labelType: NavigationRailLabelType.all,
+                    selectedIconTheme: const IconThemeData(color: AppColors.adminPrimary),
+                    selectedLabelTextStyle: const TextStyle(
+                      color: AppColors.adminPrimary, fontWeight: FontWeight.bold, fontSize: 12),
+                    unselectedIconTheme: const IconThemeData(color: AppColors.adminTextSecondary),
+                    unselectedLabelTextStyle: const TextStyle(
+                      color: AppColors.adminTextSecondary, fontSize: 12),
+                    destinations: const [
+                      NavigationRailDestination(
+                        icon: Icon(Icons.dashboard),
+                        label: Text("Oversikt"),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.schedule),
+                        label: Text("Kampprogram"),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.account_tree),
+                        label: Text("Oppsett"),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.groups),
+                        label: Text("Lag"),
+                      ),
+                    ],
+                  ),
+                if (ResponsiveLayout.getBreakpoint(context).index >= ResponsiveBreakpoint.tablet.index)
+                  const VerticalDivider(width: 1, thickness: 1),
                 Expanded(child: _buildNavContent()),
               ],
             ),
           ),
         ],
       ),
+      bottomNavigationBar: ResponsiveLayout.getBreakpoint(context).index < ResponsiveBreakpoint.tablet.index
+          ? BottomNavigationBar(
+              currentIndex: _selectedNavIndex,
+              onTap: (i) => setState(() => _selectedNavIndex = i),
+              type: BottomNavigationBarType.fixed,
+              selectedItemColor: AppColors.adminPrimary,
+              unselectedItemColor: AppColors.adminTextSecondary,
+              items: const [
+                BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: "Oversikt"),
+                BottomNavigationBarItem(icon: Icon(Icons.schedule), label: "Program"),
+                BottomNavigationBarItem(icon: Icon(Icons.account_tree), label: "Oppsett"),
+                BottomNavigationBarItem(icon: Icon(Icons.groups), label: "Lag"),
+              ],
+            )
+          : null,
       floatingActionButton: _selectedNavIndex == 3
           ? FloatingActionButton.extended(
               onPressed: _showAddTeamDialog,
@@ -2292,8 +2324,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    final matches = matchSnap.data!.docs;
-                    final teams = teamSnap.data!.docs;
+                    var matches = matchSnap.data!.docs;
+                    var teams = teamSnap.data!.docs;
+                    
+                    if (_selectedCategoryId != null && _selectedCategoryId != 'all') {
+                      matches = matches.where((m) => (m.data() as Map)['category_id'] == _selectedCategoryId).toList();
+                      teams = teams.where((t) => (t.data() as Map)['category_id'] == _selectedCategoryId).toList();
+                    }
+
                     final categories = catSnap.data!.docs;
                     final tourData = tourSnap.data?.data() as Map<String, dynamic>? ?? {};
 
@@ -2356,56 +2394,64 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       );
                     }
 
-                    return SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Turnerings-Oversikt", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                          const SizedBox(height: 16),
-                          GridView.count(
-                            crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 2,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            childAspectRatio: 1.5,
-                            children: [
-                              statCard("Påmeldte lag", "$totalTeams", Icons.groups, Colors.blue),
-                              statCard("Antall baner", "$courtsCount", Icons.sports_tennis, Colors.green),
-                              statCard("Kamper totalt", "$totalMatches", Icons.sports_volleyball, Colors.orange),
-                              statCard("Ferdigspilte", "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}", Icons.check_circle, Colors.teal),
-                            ],
-                          ),
-                          const SizedBox(height: 24),
-                          const Text("Kamper per Klasse (Kjønn)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: matchesPerGender.entries.where((e) => e.value > 0).map((e) {
-                              return Chip(
-                                label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                backgroundColor: AppColors.coral,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                              );
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 24),
-                          const Text("Kamper per Nivå", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: matchesPerLevel.entries.where((e) => e.value > 0).map((e) {
-                              return Chip(
-                                label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                backgroundColor: AppColors.adminSurfaceElevated,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                              );
-                            }).toList(),
-                          ),
-                        ],
+                    return ResponsiveContainer.dashboard(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text("Turnerings-Oversikt", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                                _buildInlineCategoryFilter(),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            GridView.count(
+                              crossAxisCount: ResponsiveLayout.gridColumns(context, mobile: 2, tablet: 4, desktop: 4, ultrawide: 4),
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              childAspectRatio: 1.5,
+                              children: [
+                                statCard("Påmeldte lag", "$totalTeams", Icons.groups, Colors.blue),
+                                statCard("Antall baner", "$courtsCount", Icons.sports_tennis, Colors.green),
+                                statCard("Kamper totalt", "$totalMatches", Icons.sports_volleyball, Colors.orange),
+                                statCard("Ferdigspilte", "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}", Icons.check_circle, Colors.teal),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            const Text("Kamper per Klasse (Kjønn)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: matchesPerGender.entries.where((e) => e.value > 0).map((e) {
+                                return Chip(
+                                  label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  backgroundColor: AppColors.coral,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 24),
+                            const Text("Kamper per Nivå", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: matchesPerLevel.entries.where((e) => e.value > 0).map((e) {
+                                return Chip(
+                                  label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  backgroundColor: AppColors.adminSurfaceElevated,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                );
+                              }).toList(),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -2424,10 +2470,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('matches')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .where('category_id', isEqualTo: _selectedCategoryId)
+      stream: _matchesQuery()
           .snapshots(),
       builder: (ctx, snap) {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -2656,56 +2699,53 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  // ─── Category selector ────────────────────────────────────────────────────
+  Widget _buildInlineCategoryFilter() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('categories')
+          .where('tournament_id', isEqualTo: widget.tournamentId)
+          .snapshots(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) return const SizedBox.shrink();
+        final cats = snap.data!.docs;
+        if (cats.isEmpty) return const SizedBox.shrink();
 
-  Widget _buildCategorySelector() {
-    return Container(
-      color: AppColors.adminSurfaceElevated,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('categories')
-            .where('tournament_id', isEqualTo: widget.tournamentId)
-            .snapshots(),
-        builder: (ctx, snap) {
-          if (!snap.hasData) return const SizedBox(height: 40, child: Center(child: LinearProgressIndicator()));
-          final cats = snap.data!.docs;
-          if (cats.isEmpty) {
-            return const Padding(
-              padding: EdgeInsets.all(8),
-              child: Text("Ingen klasser funnet.", style: TextStyle(color: AppColors.adminOrange)),
-            );
-          }
+        if (_selectedCategoryId == null && cats.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            setState(() { _selectedCategoryId = 'all'; });
+          });
+        }
 
-          if (_selectedCategoryId == null && cats.isNotEmpty) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              setState(() { _selectedCategoryId = cats.first.id; });
-            });
-          }
-
-          return Row(
-            children: [
-              const Text("Klasse:", style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: DropdownButton<String>(
-                  value: _selectedCategoryId,
-                  isExpanded: true,
-                  underline: const SizedBox.shrink(),
-                  items: cats.map((c) {
-                    final data = c.data() as Map<String, dynamic>;
-                    return DropdownMenuItem<String>(
-                      value: c.id,
-                      child: Text("${data['name']} (max ${data['max_teams']} lag)"),
-                    );
-                  }).toList(),
-                  onChanged: (v) => setState(() => _selectedCategoryId = v),
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.adminSurfaceElevated),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _selectedCategoryId,
+              icon: const Icon(Icons.keyboard_arrow_down, size: 20),
+              isDense: true,
+              items: [
+                const DropdownMenuItem<String>(
+                  value: 'all',
+                  child: Text('Begge kjønn / Alle', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
-              ),
-            ],
-          );
-        },
-      ),
+                ...cats.map((c) {
+                  final data = c.data() as Map<String, dynamic>;
+                  return DropdownMenuItem<String>(
+                    value: c.id,
+                    child: Text(data['name'] ?? 'Klasse', style: const TextStyle(fontSize: 14)),
+                  );
+                }),
+              ],
+              onChanged: (v) => setState(() => _selectedCategoryId = v),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2719,20 +2759,23 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       children: [
         Padding(
           padding: const EdgeInsets.all(12),
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.auto_awesome),
-            label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.adminOrangeHover, foregroundColor: AppColors.adminText),
-            onPressed: _autoGenerateTeams,
+          child: Row(
+            children: [
+              _buildInlineCategoryFilter(),
+              const Spacer(),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.adminPrimaryHover, foregroundColor: AppColors.adminText),
+                onPressed: _autoGenerateTeams,
+              ),
+            ],
           ),
         ),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('teams')
-                .where('tournament_id', isEqualTo: widget.tournamentId)
-                .where('category_id', isEqualTo: _selectedCategoryId)
+            stream: _teamsQuery()
                 .snapshots(),
             builder: (ctx, snap) {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -2781,12 +2824,12 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                               visualDensity: VisualDensity.compact,
                             ),
                           IconButton(
-                            icon: const Icon(Icons.edit, color: AppColors.adminOrange),
+                            icon: const Icon(Icons.edit, color: AppColors.adminPrimary),
                             tooltip: "Rediger / Flytt",
                             onPressed: () => _showTeamEditDialog(sorted[i]),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.delete, color: AppColors.adminOrange),
+                            icon: const Icon(Icons.delete, color: AppColors.adminPrimary),
                             onPressed: () => _confirmDeleteTeam(
                                 sorted[i].id, d['team_name'] ?? 'laget'),
                           ),
@@ -2811,17 +2854,11 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('teams')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .where('category_id', isEqualTo: _selectedCategoryId)
+      stream: _teamsQuery()
           .snapshots(),
       builder: (ctx, teamSnap) {
         return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('matches')
-              .where('tournament_id', isEqualTo: widget.tournamentId)
-              .where('category_id', isEqualTo: _selectedCategoryId)
+          stream: _matchesQuery()
               .snapshots(),
           builder: (ctx2, matchSnap) {
             if (!teamSnap.hasData || !matchSnap.hasData) {
@@ -2877,6 +2914,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       
                       const Spacer(),
                       
+                      _buildInlineCategoryFilter(),
+                      const SizedBox(width: 16),
+                      
                       if (hasMatches) ...[
                         _buildPublishButtonInline(),
                         const SizedBox(width: 12),
@@ -2887,9 +2927,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                         label: const Text("Rediger turnering"),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.adminSurface,
-                          foregroundColor: AppColors.adminOrange,
+                          foregroundColor: AppColors.adminPrimary,
                           elevation: 0,
-                          side: const BorderSide(color: AppColors.adminOrange),
+                          side: const BorderSide(color: AppColors.adminPrimary),
                         ),
                         onPressed: () async {
                           final doc = await FirebaseFirestore.instance
@@ -2908,7 +2948,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 ),
                 // Tab content
                 Expanded(
-                  child: SingleChildScrollView(
+                  child: (_selectedCategoryId == 'all')
+                    ? const Center(child: Text("Velg en spesifikk klasse for å se puljeoppsett og sluttspill.", style: TextStyle(color: AppColors.adminTextSecondary, fontSize: 16)))
+                    : SingleChildScrollView(
                     padding: const EdgeInsets.all(20),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2969,23 +3011,23 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             color: AppColors.adminSurfaceElevated,
             child: Row(children: [
-              const Icon(Icons.format_list_numbered, color: AppColors.adminOrange, size: 20),
+              const Icon(Icons.format_list_numbered, color: AppColors.adminPrimary, size: 20),
               const SizedBox(width: 10),
               const Text("Seeding-oversikt",
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
               const Spacer(),
               if (swapName != null) ...[
-                const Icon(Icons.swap_vert, size: 14, color: AppColors.adminOrange),
+                const Icon(Icons.swap_vert, size: 14, color: AppColors.adminPrimary),
                 const SizedBox(width: 4),
                 Flexible(
                   child: Text("Velg lag å bytte med «$swapName»",
-                      style: const TextStyle(fontSize: 12, color: AppColors.adminOrange, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 12, color: AppColors.adminPrimary, fontWeight: FontWeight.bold),
                       overflow: TextOverflow.ellipsis),
                 ),
                 const SizedBox(width: 8),
                 GestureDetector(
                   onTap: () => setState(() => _swapSelectionDoc = null),
-                  child: const Icon(Icons.close, size: 16, color: AppColors.adminOrange),
+                  child: const Icon(Icons.close, size: 16, color: AppColors.adminPrimary),
                 ),
               ] else
                 Text("$numTeams lag · $numGroups ${numGroups == 1 ? 'pulje' : 'puljer'}",
@@ -3022,7 +3064,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
             return Column(children: [
               Container(
-                color: isSelected ? AppColors.adminOrange.withValues(alpha: 0.08) : null,
+                color: isSelected ? AppColors.adminPrimary.withValues(alpha: 0.08) : null,
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
                 child: Row(children: [
                   // Seed badge
@@ -3032,7 +3074,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                       decoration: BoxDecoration(
                         color: isSelected
-                            ? AppColors.adminOrange.withValues(alpha: 0.15)
+                            ? AppColors.adminPrimary.withValues(alpha: 0.15)
                             : AppColors.adminSurfaceElevated,
                         borderRadius: BorderRadius.circular(6),
                       ),
@@ -3040,7 +3082,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                         child: Text('${seed ?? '–'}',
                             style: TextStyle(
                               fontSize: 13, fontWeight: FontWeight.bold,
-                              color: isSelected ? AppColors.adminOrange : AppColors.adminText,
+                              color: isSelected ? AppColors.adminPrimary : AppColors.adminText,
                             )),
                       ),
                     ),
@@ -3054,7 +3096,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       Text(d['team_name'] ?? 'Ukjent',
                         style: TextStyle(
                           fontWeight: FontWeight.w600, fontSize: 13,
-                          color: isSelected ? AppColors.adminOrange : AppColors.adminText,
+                          color: isSelected ? AppColors.adminPrimary : AppColors.adminText,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -3094,7 +3136,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                             fontSize: 11, fontWeight: FontWeight.bold,
                             color: isExpected
                                 ? AppColors.adminTextSecondary
-                                : AppColors.adminOrange,
+                                : AppColors.adminPrimary,
                             fontStyle: isExpected ? FontStyle.italic : FontStyle.normal,
                           )),
                       ),
@@ -3112,7 +3154,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                         : inSwapMode
                             ? ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.adminOrange,
+                                  backgroundColor: AppColors.adminPrimary,
                                   foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                   textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
@@ -3155,7 +3197,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Row(children: [
-              Icon(Icons.emoji_events, color: AppColors.adminOrange, size: 24),
+              Icon(Icons.emoji_events, color: AppColors.adminPrimary, size: 24),
               SizedBox(width: 12),
               Text("Generer turneringsoppsett",
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
@@ -3227,16 +3269,16 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.adminOrange.withValues(alpha: 0.1) : Colors.transparent,
+          color: isSelected ? AppColors.adminPrimary.withValues(alpha: 0.1) : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isSelected ? AppColors.adminOrange : Colors.transparent,
+            color: isSelected ? AppColors.adminPrimary : Colors.transparent,
           ),
         ),
         child: Text(
           title,
           style: TextStyle(
-            color: isSelected ? AppColors.adminOrange : AppColors.adminTextSecondary,
+            color: isSelected ? AppColors.adminPrimary : AppColors.adminTextSecondary,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
@@ -3256,7 +3298,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             color: AppColors.adminSurfaceElevated,
             child: const Row(children: [
-              Icon(Icons.grid_view, color: AppColors.adminOrange, size: 20),
+              Icon(Icons.grid_view, color: AppColors.adminPrimary, size: 20),
               SizedBox(width: 10),
               Text("Puljeoversikt",
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
@@ -3416,7 +3458,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             ? AppColors.green
             : isPending
                 ? AppColors.adminTextSecondary
-                : AppColors.adminOrange;
+                : AppColors.adminPrimary;
 
         return InkWell(
           onTap: () => _showMatchEditDialog(m),
@@ -3443,7 +3485,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                     Text('K$num',
                         style: const TextStyle(
                             fontSize: 10,
-                            color: AppColors.adminOrange,
+                            color: AppColors.adminPrimary,
                             fontWeight: FontWeight.bold)),
                     const SizedBox(width: 6),
                   ],
@@ -3541,9 +3583,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             margin: const EdgeInsets.only(bottom: 10),
             decoration: BoxDecoration(
-              color: AppColors.adminOrange.withValues(alpha: 0.12),
+              color: AppColors.adminPrimary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.adminOrange.withValues(alpha: 0.3)),
+              border: Border.all(color: AppColors.adminPrimary.withValues(alpha: 0.3)),
             ),
             child: Row(children: [
               Icon(
@@ -3553,14 +3595,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                         ? Icons.workspace_premium
                         : Icons.military_tech,
                 size: 14,
-                color: AppColors.adminOrange,
+                color: AppColors.adminPrimary,
               ),
               const SizedBox(width: 6),
               Text('$bracket-Bracket',
                   style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.adminOrange)),
+                      color: AppColors.adminPrimary)),
             ]),
           ),
           // Runde-seksjoner
@@ -3600,7 +3642,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             color: AppColors.adminSurfaceElevated,
             child: Row(children: [
-              const Icon(Icons.emoji_events, color: AppColors.adminOrange, size: 20),
+              const Icon(Icons.emoji_events, color: AppColors.adminPrimary, size: 20),
               const SizedBox(width: 10),
               const Text("Sluttspillsoversikt",
                   style: TextStyle(
@@ -3609,9 +3651,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       color: AppColors.adminText)),
               const Spacer(),
               TextButton.icon(
-                icon: const Icon(Icons.sync, size: 15, color: AppColors.adminOrange),
+                icon: const Icon(Icons.sync, size: 15, color: AppColors.adminPrimary),
                 label: const Text("Sync",
-                    style: TextStyle(color: AppColors.adminOrange, fontSize: 12)),
+                    style: TextStyle(color: AppColors.adminPrimary, fontSize: 12)),
                 onPressed: () async {
                   await _resolvePendingMatches();
                   _snack("Bracket synkronisert.");
@@ -3659,9 +3701,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             ),
             child: Row(children: [
               CircleAvatar(
-                backgroundColor: AppColors.adminOrange.withValues(alpha: 0.2),
+                backgroundColor: AppColors.adminPrimary.withValues(alpha: 0.2),
                 child: Text('${(dataA['seed'] as num?)?.toInt() ?? '?'}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.adminOrange)),
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.adminPrimary)),
               ),
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3676,7 +3718,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Icon(Icons.swap_vert, size: 28, color: AppColors.adminOrange),
+            child: Icon(Icons.swap_vert, size: 28, color: AppColors.adminPrimary),
           ),
           Container(
             padding: const EdgeInsets.all(12),
@@ -3686,9 +3728,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             ),
             child: Row(children: [
               CircleAvatar(
-                backgroundColor: AppColors.adminOrange.withValues(alpha: 0.2),
+                backgroundColor: AppColors.adminPrimary.withValues(alpha: 0.2),
                 child: Text('${(dataB['seed'] as num?)?.toInt() ?? '?'}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.adminOrange)),
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.adminPrimary)),
               ),
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3734,23 +3776,36 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     // Bytt seed og gruppe på begge lagdokumenter
     final Map<String, dynamic> updA = {};
     final Map<String, dynamic> updB = {};
-    if (seedB  != null) updA['seed']  = seedB;  else updA['seed']  = FieldValue.delete();
-    if (seedA  != null) updB['seed']  = seedA;  else updB['seed']  = FieldValue.delete();
-    if (groupB != null) updA['group'] = groupB; else updA['group'] = FieldValue.delete();
-    if (groupA != null) updB['group'] = groupA; else updB['group'] = FieldValue.delete();
+    if (seedB  != null) {
+      updA['seed']  = seedB;
+    } else {
+      updA['seed']  = FieldValue.delete();
+    }
+    if (seedA  != null) {
+      updB['seed']  = seedA;
+    } else {
+      updB['seed']  = FieldValue.delete();
+    }
+    if (groupB != null) {
+      updA['group'] = groupB;
+    } else {
+      updA['group'] = FieldValue.delete();
+    }
+    if (groupA != null) {
+      updB['group'] = groupA;
+    } else {
+      updB['group'] = FieldValue.delete();
+    }
 
     batch.update(teamA.reference, updA);
     batch.update(teamB.reference, updB);
 
     // Oppdater kampdata som refererer til enten lagA eller lagB
-    final matchSnap = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: _selectedCategoryId)
+    final matchSnap = await _matchesQuery()
         .get();
 
     for (final m in matchSnap.docs) {
-      final d   = m.data() as Map<String, dynamic>;
+      final d   = m.data();
       final upd = <String, dynamic>{};
 
       final aId = d['team_a_id'] as String? ?? '';
@@ -3800,37 +3855,111 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   Future<void> _publishCategory() async {
     if (_selectedCategoryId == null) return;
-    await FirebaseFirestore.instance
-        .collection('categories')
-        .doc(_selectedCategoryId)
-        .update({'published': true});
-    _snack("Oppsett publisert! Synlig for alle i appen.");
-  }
+    
+    if (_selectedCategoryId == 'all') {
+      final batch = FirebaseFirestore.instance.batch();
+      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {'published': true});
+      }
+      await batch.commit();
+      _snack("Oppsett for alle klasser publisert! Synlig for alle i appen.");
+      return;
+    }
 
-  Future<void> _unpublishCategory() async {
-    if (_selectedCategoryId == null) return;
-    final ok = await showDialog<bool>(
+    final currentCat = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
+    final currentCatName = currentCat.data()?['name'] ?? 'Valgt klasse';
+
+    final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Avpubliser oppsett?"),
-        content: const Text("Kampoppsettet skjules fra appen. Du kan publisere igjen når du er klar."),
+        title: const Text("Publiser oppsett"),
+        content: const Text("Hvem vil du publisere oppsettet for?"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
+          TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text("Avbryt")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'current'),
+            child: Text("Bare $currentCatName"),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Avpubliser"),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.green, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, 'all'),
+            child: const Text("Alle/Begge klasser"),
           ),
         ],
       ),
     );
-    if (ok != true) return;
-    await FirebaseFirestore.instance
-        .collection('categories')
-        .doc(_selectedCategoryId)
-        .update({'published': false});
-    _snack("Oppsett avpublisert.");
+
+    if (result == 'cancel' || result == null) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+    if (result == 'current') {
+      batch.update(FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId!), {'published': true});
+      await batch.commit();
+      _snack("Oppsett for $currentCatName publisert! Synlig for alle i appen.");
+    } else if (result == 'all') {
+      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {'published': true});
+      }
+      await batch.commit();
+      _snack("Oppsett for alle klasser publisert! Synlig for alle i appen.");
+    }
+  }
+
+  Future<void> _unpublishCategory() async {
+    if (_selectedCategoryId == null) return;
+    
+    if (_selectedCategoryId == 'all') {
+      final batch = FirebaseFirestore.instance.batch();
+      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {'published': false});
+      }
+      await batch.commit();
+      _snack("Oppsett for alle klasser avpublisert.");
+      return;
+    }
+
+    final currentCat = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
+    final currentCatName = currentCat.data()?['name'] ?? 'Valgt klasse';
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Avpubliser oppsett?"),
+        content: const Text("Kampoppsettet skjules fra appen.\nHvem vil du avpublisere for?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text("Avbryt")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'current'),
+            child: Text("Bare $currentCatName"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
+            onPressed: () => Navigator.pop(ctx, 'all'),
+            child: const Text("Alle/Begge klasser"),
+          ),
+        ],
+      ),
+    );
+
+    if (result == 'cancel' || result == null) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+    if (result == 'current') {
+      batch.update(FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId!), {'published': false});
+      await batch.commit();
+      _snack("Oppsett for $currentCatName avpublisert.");
+    } else if (result == 'all') {
+      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {'published': false});
+      }
+      await batch.commit();
+      _snack("Oppsett for alle klasser avpublisert.");
+    }
   }
 
   // ─── Oppsett – hjelpemetoder ──────────────────────────────────────────────
@@ -3870,7 +3999,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
     Color statusColor = AppColors.adminTextSecondary;
     String statusLabel = 'Planlagt';
-    if (isLive) { statusColor = AppColors.adminOrangeHover; statusLabel = 'LIVE'; }
+    if (isLive) { statusColor = AppColors.adminPrimaryHover; statusLabel = 'LIVE'; }
     if (isFinished) { statusColor = AppColors.green; statusLabel = 'Ferdig'; }
     if (isPending) statusLabel = 'Venter';
 
@@ -3889,7 +4018,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text('$matchNum',
-                    style: const TextStyle(fontSize: 11, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                    style: const TextStyle(fontSize: 11, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)),
               ),
             Expanded(
               child: Column(
@@ -3926,7 +4055,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
               decoration: BoxDecoration(
                 color: isFinished ? AppColors.green.withValues(alpha: 0.2)
-                    : isLive ? AppColors.adminOrange.withValues(alpha: 0.2)
+                    : isLive ? AppColors.adminPrimary.withValues(alpha: 0.2)
                     : isPending ? Colors.transparent
                     : AppColors.adminSurfaceElevated,
                 borderRadius: BorderRadius.circular(12),
@@ -3988,10 +4117,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   Widget _buildGroupsDisplay() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('teams')
-          .where('tournament_id', isEqualTo: widget.tournamentId)
-          .where('category_id', isEqualTo: _selectedCategoryId)
+      stream: _teamsQuery()
           .snapshots(),
       builder: (ctx, teamSnap) {
         if (!teamSnap.hasData) return const Center(child: CircularProgressIndicator());
@@ -4013,10 +4139,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         }
 
         return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('matches')
-              .where('tournament_id', isEqualTo: widget.tournamentId)
-              .where('category_id', isEqualTo: _selectedCategoryId)
+          stream: _matchesQuery()
               .where('stage', isEqualTo: 'group')
               .snapshots(),
           builder: (ctx, matchSnap) {
@@ -4249,7 +4372,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
               color: isFinished ? AppColors.green.withValues(alpha: 0.2)
-                  : status == 'live' ? AppColors.adminOrange.withValues(alpha: 0.2)
+                  : status == 'live' ? AppColors.adminPrimary.withValues(alpha: 0.2)
                   : isPending ? Colors.transparent
                   : AppColors.adminSurfaceElevated,
               borderRadius: BorderRadius.circular(12),
@@ -4260,7 +4383,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               style: TextStyle(
                 fontSize: 10,
                 color: isFinished ? AppColors.green
-                    : status == 'live' ? AppColors.adminOrangeHover
+                    : status == 'live' ? AppColors.adminPrimaryHover
                     : AppColors.adminTextSecondary,
               ),
             ),
@@ -4390,4 +4513,7 @@ class _BracketPainterTopDown extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
+
+
 

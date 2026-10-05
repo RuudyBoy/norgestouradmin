@@ -240,16 +240,16 @@ class AppTheme {
   static ThemeData get admin {
     final base = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
+      brightness: Brightness.light,
       scaffoldBackgroundColor: Colors.transparent, // Background will be handled by builder
-      primaryColor: AppColors.adminOrange,
-      colorScheme: ColorScheme.dark(
-        primary:        AppColors.adminOrange,
-        secondary:      AppColors.adminOrangeHover,
+      primaryColor: AppColors.adminPrimary,
+      colorScheme: ColorScheme.light(
+        primary:        AppColors.adminPrimary,
+        secondary:      AppColors.adminPrimaryHover,
         surface:        AppColors.adminSurface,
         onPrimary:      Colors.white,
         onSurface:      AppColors.adminText,
-        outline:        Colors.white.withValues(alpha: 0.15),
+        outline:        const Color(0xFFE2E8F0),
       ),
       textTheme: _textTheme(AppColors.adminText),
       fontFamily: GoogleFonts.schibstedGrotesk().fontFamily,
@@ -258,25 +258,28 @@ class AppTheme {
         foregroundColor: AppColors.adminText,
         elevation: 0,
         scrolledUnderElevation: 0,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
         titleTextStyle: AppText.dispH2(20).copyWith(color: AppColors.adminText),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: AppColors.adminSurface.withValues(alpha: 0.9),
-        selectedItemColor: AppColors.adminOrange,
+        selectedItemColor: AppColors.adminPrimary,
         unselectedItemColor: AppColors.adminTextSecondary,
         type: BottomNavigationBarType.fixed,
         elevation: 0,
       ),
       cardTheme: CardThemeData(
         color: AppColors.adminSurface,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusCard)),
+        elevation: 3,
+        shadowColor: Colors.black.withValues(alpha: 0.2),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radiusCard),
+            side: const BorderSide(color: Color(0xFFF1F5F9), width: 1)),
         margin: EdgeInsets.zero,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.adminOrange,
+          backgroundColor: AppColors.adminPrimary,
           foregroundColor: Colors.white,
           minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
@@ -289,7 +292,7 @@ class AppTheme {
           foregroundColor: AppColors.adminText,
           minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radiusButton)),
-          side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+          side: const BorderSide(color: Color(0xFFE2E8F0)),
           textStyle: AppText.uiCta.copyWith(color: AppColors.adminText, fontWeight: FontWeight.w700),
         ),
       ),
@@ -299,21 +302,21 @@ class AppTheme {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusInput),
-          borderSide: const BorderSide(color: AppColors.adminOrange, width: 1.5),
+          borderSide: const BorderSide(color: AppColors.adminPrimary, width: 1.5),
         ),
         hintStyle: AppText.uiBody.copyWith(color: AppColors.adminTextSecondary),
         labelStyle: AppText.monoSm.copyWith(color: AppColors.adminTextSecondary, fontSize: 11),
       ),
-      dividerTheme: DividerThemeData(
-        color: Colors.white.withValues(alpha: 0.10), thickness: 1, space: 0,
+      dividerTheme: const DividerThemeData(
+        color: Color(0xFFE2E8F0), thickness: 1, space: 0,
       ),
     );
     return base;

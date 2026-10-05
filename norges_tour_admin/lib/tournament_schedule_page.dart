@@ -43,7 +43,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
   void _snack(String msg, {bool isError = false}) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(msg),
-        backgroundColor: isError ? AppColors.adminOrangeHover : null,
+        backgroundColor: isError ? AppColors.adminPrimaryHover : null,
       ));
 
   String _fmtTime(int totalMinutes) {
@@ -254,7 +254,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
             children: [
-              const Icon(Icons.category, size: 16, color: AppColors.adminOrange),
+              const Icon(Icons.category, size: 16, color: AppColors.adminPrimary),
               const SizedBox(width: 8),
               const Text("Klasse:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(width: 12),
@@ -440,7 +440,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
 
     Color borderColor = AppColors.adminTextSecondary;
     if (isFinished) borderColor = AppColors.green;
-    if (status == 'live') borderColor = AppColors.adminOrange;
+    if (status == 'live') borderColor = AppColors.adminPrimary;
 
     return GestureDetector(
       onTap: () => _editMatchDialog(matchDoc),
@@ -464,7 +464,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
               children: [
                 if (matchNum != null) ...[
                   Text('Kamp $matchNum',
-                      style: const TextStyle(fontSize: 9, color: AppColors.adminOrange, fontWeight: FontWeight.bold)),
+                      style: const TextStyle(fontSize: 9, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)),
                   const SizedBox(width: 5),
                 ],
                 Text(court,
@@ -476,11 +476,11 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
                 if (group != null)
                   _tag("Pulje $group", AppColors.adminSurfaceElevated, AppColors.adminText)
                 else if (bracket != null)
-                  _tag("$bracket-bracket", AppColors.adminOrangeHover.withValues(alpha: 0.2), AppColors.adminOrangeHover),
+                  _tag("$bracket-bracket", AppColors.adminPrimaryHover.withValues(alpha: 0.2), AppColors.adminPrimaryHover),
                 if (isFinished)
                   _tag("Ferdig", AppColors.green.withValues(alpha: 0.2), AppColors.green)
                 else if (status == 'live')
-                  _tag("LIVE", AppColors.adminOrange.withValues(alpha: 0.2), AppColors.adminOrangeHover),
+                  _tag("LIVE", AppColors.adminPrimary.withValues(alpha: 0.2), AppColors.adminPrimaryHover),
               ],
             ),
             const SizedBox(height: 6),
@@ -578,7 +578,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             ],
             if (playoff.isNotEmpty) ...[
               const SizedBox(height: 16),
-              _sectionHeader("Sluttspill (bracket)", Icons.account_tree, AppColors.adminOrangeHover),
+              _sectionHeader("Sluttspill (bracket)", Icons.account_tree, AppColors.adminPrimaryHover),
               const SizedBox(height: 8),
               _buildPlayoffCrossings(playoff),
             ],
@@ -658,7 +658,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
         final bracket = entry.key;
         final bMatches = entry.value;
         final color = bracket == 'A'
-            ? AppColors.adminOrange
+            ? AppColors.adminPrimary
             : bracket == 'B'
                 ? AppColors.green
                 : AppColors.adminTextSecondary;
@@ -793,7 +793,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             Icon(
                 isPending ? Icons.hourglass_empty : Icons.circle_outlined,
                 size: 14,
-                color: isPending ? AppColors.adminTextSecondary : AppColors.adminOrange),
+                color: isPending ? AppColors.adminTextSecondary : AppColors.adminPrimary),
         ],
       ),
     );
@@ -812,7 +812,7 @@ class _TournamentSchedulePageState extends State<TournamentSchedulePage>
             children: [
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.access_time, color: AppColors.adminOrange),
+                leading: const Icon(Icons.access_time, color: AppColors.adminPrimary),
                 title: const Text("Starttid"),
                 subtitle:
                     Text(_startTime.format(ctx), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),

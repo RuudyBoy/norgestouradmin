@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_text_styles.dart';
+import 'theme/responsive_layout.dart';
 
 // ─── Turneringstyper med metadata ──────────────────────────────────────────
 class TournamentTypeConfig {
@@ -189,8 +190,11 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
     );
     if (picked != null) {
       setState(() {
-        if (which == 'start') _startTime = picked;
-        else _endTime = picked;
+        if (which == 'start') {
+          _startTime = picked;
+        } else {
+          _endTime = picked;
+        }
       });
     }
   }
@@ -334,11 +338,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
       appBar: AppBar(
         title: const Text("Ny Turnering"),
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(32),
+      body: ResponsiveContainer.form(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -356,7 +358,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
-                          color: selected ? t.color : AppColors.adminTextSecondary,
+                          color: selected ? t.color : Colors.transparent,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
                             color: selected ? t.color : AppColors.adminTextSecondary,
@@ -385,12 +387,12 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, color: typeColor, size: 18),
+                      Icon(Icons.info_outline, color: AppColors.adminTextSecondary, size: 18),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _selectedType.description,
-                          style: TextStyle(color: typeColor, fontSize: 12),
+                          style: const TextStyle(color: AppColors.adminTextSecondary, fontSize: 12),
                         ),
                       ),
                     ],
@@ -444,88 +446,74 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 const SizedBox(height: 12),
 
                 // Datoer og Tid
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => _pickDate('start'),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.calendar_today, size: 16),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                _startDate == null ? "Startdato *" : _fmtDate(_startDate!),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                ResponsiveTwoColumn(
+                  left: OutlinedButton(
+                    onPressed: () => _pickDate('start'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.calendar_today, size: 16),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            _startDate == null ? "Startdato *" : _fmtDate(_startDate!),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => _pickDate('end'),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.event, size: 16),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                _endDate == null ? "Sluttdato *" : _fmtDate(_endDate!),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                  ),
+                  right: OutlinedButton(
+                    onPressed: () => _pickDate('end'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.event, size: 16),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            _endDate == null ? "Sluttdato *" : _fmtDate(_endDate!),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => _pickTime('start'),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.access_time, size: 16),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                _startTime == null ? "Starttid (per dag) *" : "${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}",
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                ResponsiveTwoColumn(
+                  left: OutlinedButton(
+                    onPressed: () => _pickTime('start'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.access_time, size: 16),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            _startTime == null ? "Starttid (per dag) *" : "${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}",
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => _pickTime('end'),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.access_time, size: 16),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                _endTime == null ? "Sluttid (per dag) *" : "${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}",
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                  ),
+                  right: OutlinedButton(
+                    onPressed: () => _pickTime('end'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.access_time, size: 16),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            _endTime == null ? "Sluttid (per dag) *" : "${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}",
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 8),
                 const Text(
@@ -537,7 +525,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(
                       color: _registrationDeadline == null
-                          ? AppColors.adminOrange
+                          ? AppColors.adminPrimary
                           : AppColors.adminTextSecondary,
                     ),
                   ),
@@ -545,7 +533,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.lock_clock, size: 16, color: AppColors.adminOrange),
+                      const Icon(Icons.lock_clock, size: 16, color: AppColors.adminPrimary),
                       const SizedBox(width: 8),
                       Flexible(
                         child: Text(
@@ -553,7 +541,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                               ? "Påmeldingsfrist *"
                               : "Frist: ${_fmtDate(_registrationDeadline!)}",
                           style: TextStyle(
-                            color: _registrationDeadline == null ? AppColors.adminOrange : null,
+                            color: _registrationDeadline == null ? AppColors.adminPrimary : null,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -570,40 +558,33 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 _sectionTitle("Format & Baner"),
                 const SizedBox(height: 16),
 
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _courtsCount,
-                        decoration: const InputDecoration(
-                          labelText: "Antall baner",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.grid_view),
-                        ),
-                        items: [2, 3, 4, 5, 6, 8, 10, 12]
-                            .map((n) => DropdownMenuItem(value: n, child: Text("$n baner")))
-                            .toList(),
-                        onChanged: (v) => setState(() => _courtsCount = v ?? 6),
-                      ),
+                ResponsiveTwoColumn(
+                  left: DropdownButtonFormField<int>(
+                    initialValue: _courtsCount,
+                    decoration: const InputDecoration(
+                      labelText: "Antall baner",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.grid_view),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _matchDurationMinutes,
-                        decoration: const InputDecoration(
-                          labelText: "Tid per kamp",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.timer),
-                        ),
-                        items: [
-                          const DropdownMenuItem(value: 40, child: Text("40 min")),
-                          const DropdownMenuItem(value: 50, child: Text("50 min")),
-                          const DropdownMenuItem(value: 60, child: Text("60 min")),
-                        ],
-                        onChanged: (v) => setState(() => _matchDurationMinutes = v ?? 60),
-                      ),
+                    items: [2, 3, 4, 5, 6, 8, 10, 12]
+                        .map((n) => DropdownMenuItem(value: n, child: Text("$n baner")))
+                        .toList(),
+                    onChanged: (v) => setState(() => _courtsCount = v ?? 6),
+                  ),
+                  right: DropdownButtonFormField<int>(
+                    initialValue: _matchDurationMinutes,
+                    decoration: const InputDecoration(
+                      labelText: "Tid per kamp",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.timer),
                     ),
-                  ],
+                    items: [
+                      const DropdownMenuItem(value: 40, child: Text("40 min")),
+                      const DropdownMenuItem(value: 50, child: Text("50 min")),
+                      const DropdownMenuItem(value: 60, child: Text("60 min")),
+                    ],
+                    onChanged: (v) => setState(() => _matchDurationMinutes = v ?? 60),
+                  ),
                 ),
                 const SizedBox(height: 16),
 
@@ -664,32 +645,25 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                 // ─── KAPASITET ─────────────────────────────────────────────
                 _sectionTitle("Kapasitet & Påmelding"),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _maxTotalCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Maks lag totalt *",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.group),
-                        ),
-                      ),
+                ResponsiveTwoColumn(
+                  left: TextField(
+                    controller: _maxTotalCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Maks lag totalt *",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.group),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _maxPerClassCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Maks lag per klasse",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.group_add),
-                        ),
-                      ),
+                  ),
+                  right: TextField(
+                    controller: _maxPerClassCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Maks lag per klasse",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.group_add),
                     ),
-                  ],
+                  ),
                 ),
 
                 const SizedBox(height: 28),
@@ -738,7 +712,6 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
             ),
           ),
         ),
-      ),
     );
   }
 
@@ -779,6 +752,6 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
 
   Widget _sectionTitle(String text) => Text(
         text,
-        style: AppText.dispH2(),
+        style: AppText.dispH2().copyWith(color: AppColors.adminTextSecondary),
       );
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'theme/app_colors.dart';
+import 'theme/responsive_layout.dart';
 
 class MatchControlPage extends StatefulWidget {
   final String matchId;
@@ -322,7 +323,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
                             onPressed: () => _updateStatus('finished'),
                             icon: const Icon(Icons.stop),
                             label: const Text("AVSLUTT"),
-                            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
+                            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
                           ),
                       ],
                     )
@@ -334,16 +335,17 @@ class _MatchControlPageState extends State<MatchControlPage> {
 
               // --- SCOREBOARD ---
               Expanded(
-                child: Row(
-                  children: [
-                    // --- HJEMMELAG (VENSTRE) ---
-                    Expanded(
-                      child: Column(
+                child: ResponsiveContainer.scoreboard(
+                  child: Row(
+                    children: [
+                      // --- HJEMMELAG (VENSTRE) ---
+                      Expanded(
+                        child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(widget.teamAName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                           const SizedBox(height: 10),
-                          Text("Sett vunnet: $homeSets", style: const TextStyle(fontSize: 16, color: AppColors.adminOrange)),
+                          Text("Sett vunnet: $homeSets", style: const TextStyle(fontSize: 16, color: AppColors.adminPrimary)),
                           const SizedBox(height: 10),
                           Text("$homeScore", style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 30),
@@ -369,7 +371,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
                         children: [
                           Text(widget.teamBName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                           const SizedBox(height: 10),
-                          Text("Sett vunnet: $awaySets", style: const TextStyle(fontSize: 16, color: AppColors.adminOrange)),
+                          Text("Sett vunnet: $awaySets", style: const TextStyle(fontSize: 16, color: AppColors.adminPrimary)),
                           const SizedBox(height: 10),
                           Text("$awayScore", style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 30),
@@ -386,6 +388,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
                     ),
                   ],
                 ),
+                ),
               ),
             ],
           );
@@ -401,7 +404,7 @@ class _MatchControlPageState extends State<MatchControlPage> {
       style: ElevatedButton.styleFrom(
         shape: const CircleBorder(),
         padding: EdgeInsets.all(isBig ? 24 : 16),
-        backgroundColor: isBig ? AppColors.adminOrange : AppColors.adminTextSecondary,
+        backgroundColor: isBig ? AppColors.adminPrimary : AppColors.adminTextSecondary,
         foregroundColor: isBig ? AppColors.adminText : AppColors.adminText,
       ),
       child: Icon(icon, size: isBig ? 32 : 24),

@@ -4,13 +4,13 @@ import 'package:cloud_firestore/cloud_firestore.dart'; // brukes i AdminDashboar
 import 'firebase_options.dart';
 import 'add_tournament_page.dart';
 import 'tournament_control_page.dart';
-import 'all_players_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'admin_login_page.dart';
-import 'player_claims_page.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_colors.dart';
 import 'admin_dashboard_overview.dart'; // Importerer oversiktsmodulen
+import 'admin_shell.dart';
+import 'theme/responsive_layout.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,16 +60,47 @@ class AuthGate extends StatelessWidget {
                   body: Center(child: CircularProgressIndicator()),
                 );
               }
-              if (adminSnapshot.hasData && adminSnapshot.data!.exists) {
-                return const AdminDashboard();
+              if (adminSnapshot.hasError) {
+                return Scaffold(
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error, color: Colors.red, size: 48),
+                        const SizedBox(height: 16),
+                        Text("Feil ved sjekk av admin-rettigheter: ${adminSnapshot.error}", textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: () => FirebaseAuth.instance.signOut(),
+                          child: const Text("Logg ut"),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
               }
-              // Signed in but not an admin — sign out and show login.
-              // signOut() trigger authStateChanges → rebuild, så den må
-              // utsettes til etter build-fasen.
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                FirebaseAuth.instance.signOut();
-              });
-              return const AdminLoginPage();
+              if (adminSnapshot.hasData && adminSnapshot.data!.exists) {
+                return const AdminShell();
+              }
+              
+              // Signed in but not an admin — show error and allow sign out
+              return Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.block, color: Colors.orange, size: 48),
+                      const SizedBox(height: 16),
+                      const Text("Ingen admin-tilgang for denne brukeren."),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () => FirebaseAuth.instance.signOut(),
+                        child: const Text("Logg ut og prøv en annen bruker"),
+                      ),
+                    ],
+                  ),
+                ),
+              );
             },
           );
         }
@@ -80,90 +111,30 @@ class AuthGate extends StatelessWidget {
 }
 
 class AdminDashboard extends StatelessWidget {
-  const AdminDashboard({super.key});
+  /// Optional test tournaments for headless widget testing without Firebase dependencies.
+  final List<Map<String, dynamic>>? testTournaments;
+
+  /// Optional flag indicating test mode to bypass live Firestore streams.
+  final bool testMode;
+
+  const AdminDashboard({
+    super.key,
+    this.testTournaments,
+    this.testMode = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Admin Dashboard"),
-        backgroundColor: Colors.blue[800],
+        backgroundColor: AppColors.adminBg,
         foregroundColor: AppColors.adminText,
+        automaticallyImplyLeading: !Responsive.isDesktopOrLarger(context),
       ),
 
       // --- SIDEMENY (DRAWER) ---
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            DrawerHeader(
-              decoration: BoxDecoration(color: Colors.blue[800]),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(
-                    "Spike Dunk Admin",
-                    style: TextStyle(
-                      color: AppColors.adminText,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    "Kontrollpanel",
-                    style: TextStyle(color: AppColors.adminTextSecondary),
-                  ),
-                ],
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.emoji_events),
-              title: const Text('Turneringer'),
-              onTap: () {
-                Navigator.pop(context); // Vi er allerede her
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.people),
-              title: const Text('Spillerdatabase'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AllPlayersPage(),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.person_add_alt_1),
-              title: const Text('Ventende Spillerkrav'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const PlayerClaimsPage(),
-                  ),
-                );
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text('Logg ut', style: TextStyle(color: Colors.red)),
-              onTap: () async {
-                await FirebaseAuth.instance.signOut();
-                if (context.mounted) {
-                  Navigator.pop(context);
-                }
-              },
-            ),
-          ],
-        ),
-      ),
+      drawer: Responsive.isDesktopOrLarger(context) ? null : const AdminDrawer(),
 
       // --- FLYTENDE KNAPP FOR Å LAGE NY TURNERING ---
       floatingActionButton: FloatingActionButton.extended(
@@ -175,242 +146,357 @@ class AdminDashboard extends StatelessWidget {
         },
         label: const Text("Ny Turnering"),
         icon: const Icon(Icons.add),
-        backgroundColor: Colors.blue[800],
+        backgroundColor: AppColors.adminBg,
         foregroundColor: AppColors.adminText,
       ),
 
-      // --- LISTE OVER TURNERINGER ---
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('tournaments')
-            .orderBy('created_at', descending: true) // Nyeste øverst
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      // --- LISTE / GRID OVER TURNERINGER ---
+      body: (testTournaments != null || testMode)
+          ? _buildDashboardBody(context, testTournaments ?? const [])
+          : StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('tournaments')
+                  .orderBy('created_at', descending: true) // Nyeste øverst
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(
-                    Icons.inbox,
-                    size: 64,
-                    color: AppColors.adminTextSecondary,
-                  ),
-                  SizedBox(height: 16),
-                  Text(
-                    "Ingen turneringer enda. Trykk på knappen for å lage en!",
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return _buildEmptyState();
+                }
+
+                final docs = snapshot.data!.docs;
+                final items = docs.map((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  return {
+                    'id': doc.id,
+                    ...data,
+                  };
+                }).toList();
+
+                return _buildDashboardBody(context, items);
+              },
+            ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: const [
+          Icon(
+            Icons.inbox,
+            size: 64,
+            color: AppColors.adminTextSecondary,
+          ),
+          SizedBox(height: 16),
+          Text(
+            "Ingen turneringer enda. Trykk på knappen for å lage en!",
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardBody(
+    BuildContext context,
+    List<Map<String, dynamic>> items,
+  ) {
+    if (items.isEmpty) {
+      return _buildEmptyState();
+    }
+
+    // Responsive containment: maks 1600px bredde for å hindre utstrekking på ultrawide
+    return ResponsiveContainer.dashboard(
+      maxWidth: ResponsiveLayout.dashboardMaxContentWidth,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Dashboard-oversikt (Statistikk for turneringer)
+          AdminDashboardOverview(
+            testTournaments: testTournaments,
+            testMode: testMode,
+            wrapInContainer: false,
+            padding: EdgeInsets.zero,
+          ),
+
+          // Responsiv visning av turneringer (1 kolonne på mobil, 2 på nettbrett, grid på desktop)
+          Expanded(
+            child: _buildTournamentGrid(context, items),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTournamentGrid(
+    BuildContext context,
+    List<Map<String, dynamic>> items,
+  ) {
+    if (Responsive.isMobile(context)) {
+      // Mobil (< 600px): enkel-kolonne liste
+      return ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final data = items[index];
+          final id = data['id'] as String? ?? '';
+          return _TournamentCard(
+            id: id,
+            data: data,
+            isGrid: false,
+          );
+        },
+      );
+    } else if (Responsive.isTablet(context)) {
+      // Nettbrett (600 - 1000px): 2 kolonner
+      return GridView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 2.8,
+          mainAxisExtent: 156,
+        ),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final data = items[index];
+          final id = data['id'] as String? ?? '';
+          return _TournamentCard(
+            id: id,
+            data: data,
+            isGrid: true,
+          );
+        },
+      );
+    } else {
+      // Desktop (>= 1000px) & Ultrawide: responsiv grid med maxCrossAxisExtent (480px)
+      return GridView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 480,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 2.8,
+          mainAxisExtent: 156,
+        ),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final data = items[index];
+          final id = data['id'] as String? ?? '';
+          return _TournamentCard(
+            id: id,
+            data: data,
+            isGrid: true,
+          );
+        },
+      );
+    }
+  }
+}
+
+class _TournamentCard extends StatelessWidget {
+  final String id;
+  final Map<String, dynamic> data;
+  final bool isGrid;
+
+  const _TournamentCard({
+    required this.id,
+    required this.data,
+    required this.isGrid,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = data['name'] ?? 'Ukjent';
+    final location = data['location'] ?? 'Ukjent sted';
+    final start = data['start_date'] ?? '?';
+    final end = data['end_date'] ?? '?';
+    final imageUrl = data['image_url'] ?? '';
+
+    return Card(
+      elevation: 2,
+      margin: isGrid ? EdgeInsets.zero : const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => TournamentControlPage(
+                tournamentId: id,
+                tournamentName: name,
+              ),
+            ),
+          );
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 4,
+              ),
+              leading: CircleAvatar(
+                radius: 24,
+                backgroundColor: Colors.blue[100],
+                backgroundImage: imageUrl.isNotEmpty
+                    ? NetworkImage(imageUrl)
+                    : null,
+                child: imageUrl.isEmpty
+                    ? const Icon(
+                        Icons.emoji_events,
+                        color: Colors.blue,
+                      )
+                    : null,
+              ),
+              title: Text(
+                name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.map,
+                        size: 14,
+                        color: AppColors.adminTextSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          location,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(
+                        Icons.calendar_today,
+                        size: 14,
+                        color: AppColors.adminTextSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          "$start - $end",
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            );
-          }
-
-          final docs = snapshot.data!.docs;
-
-          // Vi bruker en ListView som ser bra ut på PC-skjerm
-          return Column(
-            children: [
-              // Dashboard-oversikt (Statistikk for turneringer)
-              const AdminDashboardOverview(),
-
-              // Liste over turneringer
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(20),
-                  itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    final data = docs[index].data() as Map<String, dynamic>;
-                    final id = docs[index].id;
-
-                    final name = data['name'] ?? 'Ukjent';
-                    final location = data['location'] ?? 'Ukjent sted';
-                    final start = data['start_date'] ?? '?';
-                    final end = data['end_date'] ?? '?';
-                    final imageUrl = data['image_url'] ?? '';
-
-                    return Card(
-                      elevation: 2,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 10,
-                            ),
-                            leading: CircleAvatar(
-                              radius: 25,
-                              backgroundColor: Colors.blue[100],
-                              backgroundImage: imageUrl.isNotEmpty
-                                  ? NetworkImage(imageUrl)
-                                  : null,
-                              child: imageUrl.isEmpty
-                                  ? const Icon(
-                                      Icons.emoji_events,
-                                      color: Colors.blue,
-                                    )
-                                  : null,
-                            ),
-                            title: Text(
-                              name,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.map,
-                                      size: 16,
-                                      color: AppColors.adminTextSecondary,
-                                    ),
-                                    const SizedBox(width: 4),
-
-                                    // --- FIKSEN ER HER ---
-                                    // Flexible gjør at teksten krymper hvis det er trangt
-                                    Flexible(
-                                      child: Text(
-                                        location,
-                                        overflow: TextOverflow
-                                            .ellipsis, // Legger til "..." hvis for lang
-                                        maxLines: 1, // Holder seg på én linje
-                                      ),
-                                    ),
-
-                                    const SizedBox(width: 16),
-
-                                    // Datoene kan også bli for lange på mobilskjermer
-                                    const Icon(
-                                      Icons.calendar_today,
-                                      size: 16,
-                                      color: AppColors.adminTextSecondary,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Flexible(
-                                      child: Text(
-                                        "$start - $end",
-                                        overflow: TextOverflow.ellipsis,
-                                        maxLines: 1,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(
-                              right: 16,
-                              bottom: 8,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                ElevatedButton(
-                                  onPressed: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            TournamentControlPage(
-                                              tournamentId: id,
-                                              tournamentName: name,
-                                            ),
-                                      ),
-                                    );
-                                  },
-                                  child: const Text("Administrer"),
-                                ),
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  tooltip: 'Slett turnering',
-                                  onPressed: () async {
-                                    final confirm = await showDialog<bool>(
-                                      context: context,
-                                      builder: (context) => AlertDialog(
-                                        title: const Text("Slett turnering"),
-                                        content: Text(
-                                          "Er du sikker på at du vil slette '$name'?\n\nDette kan ikke angres!",
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () =>
-                                                Navigator.pop(context, false),
-                                            child: const Text("Avbryt"),
-                                          ),
-                                          ElevatedButton(
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.red,
-                                              foregroundColor:
-                                                  AppColors.adminText,
-                                            ),
-                                            onPressed: () =>
-                                                Navigator.pop(context, true),
-                                            child: const Text("Slett"),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    if (confirm == true && context.mounted) {
-                                      try {
-                                        await FirebaseFirestore.instance
-                                            .collection('tournaments')
-                                            .doc(id)
-                                            .delete();
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                "Turnering '$name' slettet.",
-                                              ),
-                                            ),
-                                          );
-                                        }
-                                      } catch (e) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                "Feil ved sletting: $e",
-                                              ),
-                                            ),
-                                          );
-                                        }
-                                      }
-                                    }
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(
+                right: 8,
+                bottom: 8,
               ),
-            ],
-          );
-        },
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => TournamentControlPage(
+                            tournamentId: id,
+                            tournamentName: name,
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text("Administrer"),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(
+                      Icons.delete,
+                      color: Colors.red,
+                    ),
+                    tooltip: 'Slett turnering',
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text("Slett turnering"),
+                          content: Text(
+                            "Er du sikker på at du vil slette '$name'?\n\nDette kan ikke angres!",
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text("Avbryt"),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: AppColors.adminText,
+                              ),
+                              onPressed: () => Navigator.pop(context, true),
+                              child: const Text("Slett"),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true && context.mounted) {
+                        try {
+                          await FirebaseFirestore.instance
+                              .collection('tournaments')
+                              .doc(id)
+                              .delete();
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  "Turnering '$name' slettet.",
+                                ),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  "Feil ved sletting: $e",
+                                ),
+                              ),
+                            );
+                          }
+                        }
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_text_styles.dart';
+import 'theme/responsive_layout.dart';
 
 class EditTournamentPage extends StatefulWidget {
   final String tournamentId;
@@ -243,37 +244,28 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
             ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: ListView(
-            padding: const EdgeInsets.all(24),
+      body: ResponsiveContainer.form(
+        child: ListView(
+          padding: const EdgeInsets.all(24),
             children: [
               // ─── STATUS ──────────────────────────────────────────────────
               _section("Turneringsstatus"),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _statusCard(
-                      "Turneringsstatus",
-                      _tournamentStatus,
-                      {'upcoming': 'Kommende', 'active': 'Pågår', 'finished': 'Avsluttet'},
-                      {'upcoming': AppColors.adminOrange, 'active': AppColors.green, 'finished': AppColors.adminTextSecondary},
-                      (v) => setState(() => _tournamentStatus = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _statusCard(
-                      "Påmelding",
-                      _registrationStatus,
-                      {'open': 'Åpen', 'closed': 'Lukket'},
-                      {'open': AppColors.green, 'closed': AppColors.adminOrange},
-                      (v) => setState(() => _registrationStatus = v),
-                    ),
-                  ),
-                ],
+              ResponsiveTwoColumn(
+                left: _statusCard(
+                  "Turneringsstatus",
+                  _tournamentStatus,
+                  {'upcoming': 'Kommende', 'active': 'Pågår', 'finished': 'Avsluttet'},
+                  {'upcoming': AppColors.adminPrimary, 'active': AppColors.green, 'finished': AppColors.adminTextSecondary},
+                  (v) => setState(() => _tournamentStatus = v),
+                ),
+                right: _statusCard(
+                  "Påmelding",
+                  _registrationStatus,
+                  {'open': 'Åpen', 'closed': 'Lukket'},
+                  {'open': AppColors.green, 'closed': AppColors.adminPrimary},
+                  (v) => setState(() => _registrationStatus = v),
+                ),
               ),
 
               const SizedBox(height: 24),
@@ -290,16 +282,13 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
               _field(_imageUrlCtrl, "Bilde URL", Icons.image),
               const SizedBox(height: 10),
 
-              Row(
-                children: [
-                  Expanded(child: _dateBtn("Startdato", _startDate, 'start')),
-                  const SizedBox(width: 10),
-                  Expanded(child: _dateBtn("Sluttdato", _endDate, 'end')),
-                ],
+              ResponsiveTwoColumn(
+                left: _dateBtn("Startdato", _startDate, 'start'),
+                right: _dateBtn("Sluttdato", _endDate, 'end'),
               ),
               const SizedBox(height: 8),
               _dateBtn("Påmeldingsfrist", _registrationDeadline, 'deadline',
-                  icon: Icons.lock_clock, color: AppColors.adminOrange),
+                  icon: Icons.lock_clock, color: AppColors.adminPrimary),
 
               const SizedBox(height: 24),
               const Divider(),
@@ -339,110 +328,96 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
               // ─── FORMAT ──────────────────────────────────────────────────
               _section("Format & Baner"),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: _courtsCount,
-                      decoration: const InputDecoration(
-                        labelText: "Antall baner",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.grid_view),
-                      ),
-                      items: [2, 3, 4, 5, 6, 8, 10, 12]
-                          .map((n) =>
-                              DropdownMenuItem(value: n, child: Text("$n baner")))
-                          .toList(),
-                      onChanged: (v) => setState(() => _courtsCount = v ?? 4),
-                    ),
+              ResponsiveTwoColumn(
+                left: DropdownButtonFormField<int>(
+                  initialValue: _courtsCount,
+                  decoration: const InputDecoration(
+                    labelText: "Antall baner",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.grid_view),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: _matchDurationMinutes,
-                      decoration: const InputDecoration(
-                        labelText: "Tid per kamp",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.timer),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 40, child: Text("40 min")),
-                        DropdownMenuItem(value: 50, child: Text("50 min")),
-                        DropdownMenuItem(value: 60, child: Text("60 min")),
-                      ],
-                      onChanged: (v) =>
-                          setState(() => _matchDurationMinutes = v ?? 60),
-                    ),
+                  items: [2, 3, 4, 5, 6, 8, 10, 12]
+                      .map((n) =>
+                          DropdownMenuItem(value: n, child: Text("$n baner")))
+                      .toList(),
+                  onChanged: (v) => setState(() => _courtsCount = v ?? 4),
+                ),
+                right: DropdownButtonFormField<int>(
+                  initialValue: _matchDurationMinutes,
+                  decoration: const InputDecoration(
+                    labelText: "Tid per kamp",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.timer),
                   ),
-                ],
+                  items: const [
+                    DropdownMenuItem(value: 40, child: Text("40 min")),
+                    DropdownMenuItem(value: 50, child: Text("50 min")),
+                    DropdownMenuItem(value: 60, child: Text("60 min")),
+                  ],
+                  onChanged: (v) =>
+                      setState(() => _matchDurationMinutes = v ?? 60),
+                ),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: Icon(
-                        Icons.access_time,
-                        size: 16,
-                        color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                      ),
-                      label: Text(
-                        _startTime != null
-                            ? 'Starttid (per dag): ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'
-                            : 'Starttid (per dag) *',
-                        style: TextStyle(
-                          color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                          fontSize: 13,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                          color: _startTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                        ),
-                      ),
-                      onPressed: () async {
-                        final t = await showTimePicker(
-                          context: context,
-                          initialTime: _startTime ?? const TimeOfDay(hour: 9, minute: 0),
-                        );
-                        if (t != null) setState(() => _startTime = t);
-                      },
+              ResponsiveTwoColumn(
+                left: OutlinedButton.icon(
+                  icon: Icon(
+                    Icons.access_time,
+                    size: 16,
+                    color: _startTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
+                  ),
+                  label: Text(
+                    _startTime != null
+                        ? 'Starttid (per dag): ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'
+                        : 'Starttid (per dag) *',
+                    style: TextStyle(
+                      color: _startTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: _startTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: Icon(
-                        Icons.access_time,
-                        size: 16,
-                        color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                      ),
-                      label: Text(
-                        _endTime != null
-                            ? 'Sluttid (per dag): ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'
-                            : 'Sluttid (per dag) *',
-                        style: TextStyle(
-                          color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                          fontSize: 13,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                          color: _endTime != null ? AppColors.adminOrange : AppColors.adminTextSecondary,
-                        ),
-                      ),
-                      onPressed: () async {
-                        final t = await showTimePicker(
-                          context: context,
-                          initialTime: _endTime ?? const TimeOfDay(hour: 17, minute: 0),
-                        );
-                        if (t != null) setState(() => _endTime = t);
-                      },
+                  onPressed: () async {
+                    final t = await showTimePicker(
+                      context: context,
+                      initialTime: _startTime ?? const TimeOfDay(hour: 9, minute: 0),
+                    );
+                    if (t != null) setState(() => _startTime = t);
+                  },
+                ),
+                right: OutlinedButton.icon(
+                  icon: Icon(
+                    Icons.access_time,
+                    size: 16,
+                    color: _endTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
+                  ),
+                  label: Text(
+                    _endTime != null
+                        ? 'Sluttid (per dag): ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'
+                        : 'Sluttid (per dag) *',
+                    style: TextStyle(
+                      color: _endTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: _endTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
                     ),
                   ),
-                ],
+                  onPressed: () async {
+                    final t = await showTimePicker(
+                      context: context,
+                      initialTime: _endTime ?? const TimeOfDay(hour: 17, minute: 0),
+                    );
+                    if (t != null) setState(() => _endTime = t);
+                  },
+                ),
               ),
               const SizedBox(height: 8),
               const Text(
@@ -522,12 +497,11 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
             ],
           ),
         ),
-      ),
     );
   }
 
   Widget _section(String title) => Text(title,
-      style: AppText.dispH2());
+      style: AppText.dispH2().copyWith(color: AppColors.adminTextSecondary));
 
   Widget _field(TextEditingController ctrl, String label, IconData icon) =>
       TextField(
@@ -637,7 +611,7 @@ class _CategoryAdminDialog extends StatelessWidget {
                         onPressed: () => _editCategory(context, cat),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.delete, size: 18, color: AppColors.adminOrange),
+                        icon: const Icon(Icons.delete, size: 18, color: AppColors.adminPrimary),
                         tooltip: "Slett",
                         onPressed: () => _deleteCategory(context, cat),
                       ),
@@ -737,7 +711,7 @@ class _CategoryAdminDialog extends StatelessWidget {
               child: const Text("Avbryt")),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.adminOrange, foregroundColor: AppColors.adminText),
+                backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Slett"),
           ),

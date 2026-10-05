@@ -116,13 +116,13 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 24),
                     decoration: BoxDecoration(
-                      color: AppColors.adminOrange,
-                      border: Border.all(color: AppColors.adminOrange),
+                      color: AppColors.adminPrimary,
+                      border: Border.all(color: AppColors.adminPrimary),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       _errorMessage!,
-                      style: TextStyle(color: AppColors.adminOrangeHover),
+                      style: TextStyle(color: AppColors.adminPrimaryHover),
                       textAlign: TextAlign.center,
                     ),
                   ),

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
-import 'main.dart'; // For å kunne navigere tilbake til Dashboard
+import 'admin_shell.dart';
 import 'theme/app_colors.dart';
+import 'theme/responsive_layout.dart';
 
 class AllPlayersPage extends StatefulWidget {
   const AllPlayersPage({super.key});
@@ -170,7 +171,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: docId != null ? AppColors.adminOrangeHover : AppColors.green,
+                    backgroundColor: docId != null ? AppColors.adminPrimaryHover : AppColors.green,
                     
                   ),
                   child: Text(docId != null ? "Oppdater" : "Lagre"),
@@ -189,7 +190,8 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
       appBar: AppBar(
         title: const Text("Spillerdatabase"),
         backgroundColor: AppColors.green,
-        
+        foregroundColor: AppColors.adminText,
+        automaticallyImplyLeading: !Responsive.isDesktopOrLarger(context),
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add_alt_1),
@@ -303,44 +305,9 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
           ),
         ],
       ),
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            DrawerHeader(
-              decoration: BoxDecoration(color: AppColors.green),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text("Spike Dunk Admin", style: TextStyle(color: AppColors.adminText, fontSize: 24, fontWeight: FontWeight.bold)),
-                  Text("Spillerdatabase", style: TextStyle(color: AppColors.adminTextSecondary)),
-                ],
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.emoji_events),
-              title: const Text('Turneringer'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const AdminDashboard()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.people),
-              title: const Text('Spillerdatabase'),
-              selected: true,
-              selectedTileColor: AppColors.green.withValues(alpha: 0.2),
-              onTap: () {
-                Navigator.pop(context);
-              },
-            ),
-          ],
-        ),
-      ),
+      drawer: Responsive.isDesktopOrLarger(context)
+          ? null
+          : const AdminDrawer(selectedIndex: 1),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showPlayerDialog(),
         label: const Text("Ny Spiller"),
@@ -358,50 +325,60 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
 
           if (players.isEmpty) return const Center(child: Text("Ingen spillere i databasen."));
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: players.length,
-            itemBuilder: (context, index) {
-              final data = players[index].data() as Map<String, dynamic>;
-              final docId = players[index].id;
-              
-              final firstName = data['first_name'] ?? '';
-              final lastName = data['last_name'] ?? '';
-              final club = data['club'] ?? '';
-              final position = data['position'] ?? '';
-              final imageUrl = data['image_url'] ?? '';
+          return ResponsiveContainer.dashboard(
+            child: GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: ResponsiveLayout.gridColumns(context, mobile: 1, tablet: 2, desktop: 3, ultrawide: 4),
+                childAspectRatio: 3.5, // 3.5 looks like a good aspect ratio for ListTiles in a grid
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 12,
+                mainAxisExtent: 80, // Fixed height for cards
+              ),
+              itemCount: players.length,
+              itemBuilder: (context, index) {
+                final data = players[index].data() as Map<String, dynamic>;
+                final docId = players[index].id;
+                
+                final firstName = data['first_name'] ?? '';
+                final lastName = data['last_name'] ?? '';
+                final club = data['club'] ?? '';
+                final position = data['position'] ?? '';
+                final imageUrl = data['image_url'] ?? '';
 
-              return Card(
-                child: ListTile(
-                  onTap: () => _showPlayerDialog(docId: docId, existingData: data),
-                  leading: CircleAvatar(
-                    radius: 25,
-                    backgroundColor: AppColors.green.withValues(alpha: 0.2),
-                    backgroundImage: (imageUrl.isNotEmpty) 
-                        ? NetworkImage(imageUrl) 
-                        : null,
-                    child: (imageUrl.isEmpty) 
-                        ? Text(firstName.isNotEmpty ? firstName[0] : "?") 
-                        : null,
+                return Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                    onTap: () => _showPlayerDialog(docId: docId, existingData: data),
+                    leading: CircleAvatar(
+                      radius: 25,
+                      backgroundColor: AppColors.green.withValues(alpha: 0.2),
+                      backgroundImage: (imageUrl.isNotEmpty) 
+                          ? NetworkImage(imageUrl) 
+                          : null,
+                      child: (imageUrl.isEmpty) 
+                          ? Text(firstName.isNotEmpty ? firstName[0] : "?") 
+                          : null,
+                    ),
+                    title: Text("$firstName $lastName", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text("$position ${club.isNotEmpty ? '• $club' : ''}"),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.edit, color: AppColors.adminPrimary, size: 20),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: AppColors.adminTextSecondary),
+                          onPressed: () {
+                             FirebaseFirestore.instance.collection('players').doc(docId).delete();
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                  title: Text("$firstName $lastName", style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("$position ${club.isNotEmpty ? '• $club' : ''}"),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.edit, color: AppColors.adminOrange, size: 20),
-                      const SizedBox(width: 16),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: AppColors.adminTextSecondary),
-                        onPressed: () {
-                           FirebaseFirestore.instance.collection('players').doc(docId).delete();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           );
         },
       ),

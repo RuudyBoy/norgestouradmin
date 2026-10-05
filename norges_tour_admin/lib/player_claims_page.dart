@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'admin_shell.dart';
 import 'theme/app_colors.dart';
+import 'theme/responsive_layout.dart';
 
 class PlayerClaimsPage extends StatelessWidget {
   const PlayerClaimsPage({super.key});
@@ -30,7 +32,7 @@ class PlayerClaimsPage extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Feil: $e'), backgroundColor: AppColors.adminOrange),
+          SnackBar(content: Text('Feil: $e'), backgroundColor: AppColors.adminPrimary),
         );
       }
     }
@@ -44,13 +46,13 @@ class PlayerClaimsPage extends StatelessWidget {
       });
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Krav avvist.'), backgroundColor: AppColors.adminOrange),
+          const SnackBar(content: Text('Krav avvist.'), backgroundColor: AppColors.adminPrimary),
         );
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Feil: $e'), backgroundColor: AppColors.adminOrange),
+          SnackBar(content: Text('Feil: $e'), backgroundColor: AppColors.adminPrimary),
         );
       }
     }
@@ -61,9 +63,13 @@ class PlayerClaimsPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ventende Spillerkrav'),
-        backgroundColor: AppColors.adminOrange,
-        
+        backgroundColor: AppColors.adminPrimary,
+        foregroundColor: AppColors.adminText,
+        automaticallyImplyLeading: !Responsive.isDesktopOrLarger(context),
       ),
+      drawer: Responsive.isDesktopOrLarger(context)
+          ? null
+          : const AdminDrawer(selectedIndex: 2),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('player_claims')
@@ -85,10 +91,11 @@ class PlayerClaimsPage extends StatelessWidget {
 
           final docs = snapshot.data!.docs;
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
+          return ResponsiveContainer.dashboard(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: docs.length,
+              itemBuilder: (context, index) {
               final doc = docs[index];
               final data = doc.data() as Map<String, dynamic>;
               final claimId = doc.id;
@@ -102,7 +109,7 @@ class PlayerClaimsPage extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
                   contentPadding: const EdgeInsets.all(16),
-                  leading: const Icon(Icons.person_add, size: 40, color: AppColors.adminOrange),
+                  leading: const Icon(Icons.person_add, size: 40, color: AppColors.adminPrimary),
                   title: Text(
                     '$userName ber om å bli koblet til $playerName',
                     style: const TextStyle(fontWeight: FontWeight.bold),
@@ -119,7 +126,7 @@ class PlayerClaimsPage extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.close, color: AppColors.adminOrange),
+                        icon: const Icon(Icons.close, color: AppColors.adminPrimary),
                         tooltip: 'Avvis',
                         onPressed: () => _rejectClaim(context, claimId),
                       ),
@@ -138,6 +145,7 @@ class PlayerClaimsPage extends StatelessWidget {
                 ),
               );
             },
+            ),
           );
         },
       ),

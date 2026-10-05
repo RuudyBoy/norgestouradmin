@@ -1,0 +1,84 @@
+--- a/norges_tour_admin/lib/admin_shell.dart
++++ b/norges_tour_admin/lib/admin_shell.dart
+@@ -76,4 +76,5 @@
+ class AdminShellState extends State<AdminShell> {
+   late int _selectedIndex;
+   final Set<int> _loadedIndices = <int>{};
++  final _stackKey = GlobalKey();
+ 
+@@ -98,2 +99,3 @@
+       return IndexedStack(
++        key: _stackKey,
+         index: _selectedIndex,
+@@ -107,2 +109,3 @@
+       return IndexedStack(
++        key: _stackKey,
+         index: _selectedIndex,
+@@ -117,2 +120,3 @@
+     return IndexedStack(
++      key: _stackKey,
+       index: _selectedIndex,
+@@ -423,5 +427,5 @@
+   void _handleNavigation(BuildContext context, int destinationIndex) {
+-    Navigator.pop(context); // Close mobile drawer
+-
+     final shellState = AdminShell.of(context);
++    Navigator.pop(context); // Close mobile drawer
++
+     if (shellState != null) {
+@@ -431,2 +435,3 @@
+       if (destinationIndex == selectedIndex) return;
++      if (!context.mounted) return;
+       switch (destinationIndex) {
+@@ -463,5 +468,8 @@
+           // ── Header ───────────────────────────────────────────────
+           DrawerHeader(
++            margin: const EdgeInsets.only(bottom: 8.0),
++            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+             decoration: const BoxDecoration(
+               color: AppColors.adminSurfaceElevated,
+             ),
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               mainAxisAlignment: MainAxisAlignment.end,
++              mainAxisSize: MainAxisSize.min,
+               children: [
+                 Container(
+-                  width: 40,
+-                  height: 40,
++                  width: 38,
++                  height: 38,
+                   decoration: BoxDecoration(
+                     color: AppColors.adminOrange.withValues(alpha: 0.15),
+                     borderRadius: BorderRadius.circular(8),
+                   ),
+                   child: const Icon(
+                     Icons.sports_volleyball,
+                     color: AppColors.adminOrange,
+-                    size: 24,
++                    size: 22,
+                   ),
+                 ),
+-                const SizedBox(height: 12),
++                const SizedBox(height: 8),
+                 const Text(
+                   'Spike Dunk Admin',
+                   style: TextStyle(
+                     color: AppColors.adminText,
+-                    fontSize: 22,
++                    fontSize: 20,
+                     fontWeight: FontWeight.bold,
+                   ),
+                 ),
++                const SizedBox(height: 2),
+                 const Text(
+                   'Kontrollpanel',
+                   style: TextStyle(
+                     color: AppColors.adminTextSecondary,
+-                    fontSize: 13,
++                    fontSize: 12,
+                   ),
+                 ),
+               ],
+             ),
+           ),
