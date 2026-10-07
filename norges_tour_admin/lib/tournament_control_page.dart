@@ -376,6 +376,89 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   Future<void> _generateGroupStage() async {
     if (_selectedCategoryId == null || _selectedCategoryId == 'all') { _snack("Velg en spesifikk klasse."); return; }
+    
+    final existing = await _matchesQuery().get();
+    if (existing.docs.isNotEmpty) {
+      _snack("Turnering er allerede satt opp.", isError: true);
+      return;
+    }
+
+    final tourDoc = await FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).get();
+    final td = tourDoc.data() ?? {};
+    final courtsCount = (td['courts_count'] as num?)?.toInt() ?? 4;
+    final startTimeStr = td['start_time'] as String? ?? '09:00';
+    
+    int initialStart = 9 * 60;
+    final parts = startTimeStr.split(':');
+    if (parts.length == 2) initialStart = (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts[1]) ?? 0);
+    
+    int selectedStartMinutes = initialStart;
+    List<int> selectedCourts = List.generate(courtsCount, (i) => i + 1);
+    
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text("Tid og baner"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Hvilke baner skal denne klassen bruke?"),
+              Wrap(
+                spacing: 8,
+                children: List.generate(courtsCount, (i) {
+                  final courtNum = i + 1;
+                  final isSel = selectedCourts.contains(courtNum);
+                  return FilterChip(
+                    label: Text("Bane $courtNum"),
+                    selected: isSel,
+                    onSelected: (val) {
+                      setState(() {
+                        if (val) selectedCourts.add(courtNum);
+                        else selectedCourts.remove(courtNum);
+                      });
+                    },
+                  );
+                }),
+              ),
+              const SizedBox(height: 16),
+              const Text("Nr skal frste runde starte?"),
+              Row(
+                children: [
+                  Text("${selectedStartMinutes ~/ 60}:${(selectedStartMinutes % 60).toString().padLeft(2, '0')}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  IconButton(
+                    icon: const Icon(Icons.access_time),
+                    onPressed: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay(hour: selectedStartMinutes ~/ 60, minute: selectedStartMinutes % 60),
+                      );
+                      if (time != null) setState(() => selectedStartMinutes = time.hour * 60 + time.minute);
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
+            ElevatedButton(
+              onPressed: () {
+                if (selectedCourts.isEmpty) { _snack("Du m velge minst n bane.", isError: true); return; }
+                Navigator.pop(ctx);
+                _executeGenerateGroupStage(selectedStartMinutes, selectedCourts);
+              },
+              child: const Text("Generer"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _executeGenerateGroupStage(int customStartMinutes, List<int> customCourts) async {
+    if (_selectedCategoryId == null || _selectedCategoryId == 'all') { _snack("Velg en spesifikk klasse."); return; }
 
     final snap = await _teamsQuery()
         .get();
@@ -497,32 +580,24 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     await batch.commit();
     _snack("$numGroups grupper + sluttspillkryssninger generert!");
 
-    // Auto-schedule if tournament has start_time configured
+    // Auto-schedule using custom start time
     final tourDoc = await FirebaseFirestore.instance
         .collection('tournaments')
         .doc(widget.tournamentId)
         .get();
     final td = tourDoc.data() ?? {};
-    final startTimeStr = td['start_time'] as String?;
-    if (startTimeStr != null && _selectedCategoryId != null) {
-      final parts = startTimeStr.split(':');
-      if (parts.length == 2) {
-        final startMinutes = (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts[1]) ?? 0);
-        final duration = (td['match_duration_minutes'] as num?)?.toInt() ?? 60;
-        final courts = (td['courts_count'] as num?)?.toInt() ?? 4;
-        final startDate = td['start_date'] as String? ?? 'Kampdag';
-        final endDate = td['end_date'] as String? ?? startDate;
-        await _autoScheduleForCategory(
-          _selectedCategoryId!,
-          startMinutes: startMinutes,
-          matchDurationMinutes: duration,
-          courtsCount: courts,
-          startDate: startDate,
-          endDate: endDate,
-        );
-        _snack("Kampskjema tildelt automatisk fra $startTimeStr.");
-      }
-    }
+    final duration = (td['match_duration_minutes'] as num?)?.toInt() ?? 60;
+    final startDate = td['start_date'] as String? ?? 'Kampdag';
+    final endDate = td['end_date'] as String? ?? startDate;
+    await _autoScheduleForCategory(
+      _selectedCategoryId!,
+      startMinutes: customStartMinutes,
+      matchDurationMinutes: duration,
+      courtsCount: customCourts.length,
+      startDate: startDate,
+      endDate: endDate,
+    );
+    _snack("Kampskjema tildelt automatisk.");
   }
 
   // Lager en pending gruppekamp med kilde-referanser
@@ -1930,6 +2005,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: byTime[time]!.map((m) => _buildScheduleCard(m, matchNumById, catIdToName)).toList(),
               ),
             ),
@@ -2043,9 +2119,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: isLive ? AppColors.coral.withOpacity(0.6) : isFinished ? AppColors.green.withOpacity(0.25) : AppColors.adminSurfaceElevated, width: isLive ? 1.5 : 1),
         ),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 170,
@@ -2082,7 +2157,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 child: Container(
                   color: AppColors.adminSurface,
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(
                         child: Padding(
@@ -2107,7 +2182,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               ),
             ],
           ),
-        ),
+
       ),
     );
   }
@@ -2915,7 +2990,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               children: [
             if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
                 // Top sub-menu bar
-                Container(
+                if (_selectedCategoryId != 'all') Container(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   decoration: const BoxDecoration(
                     color: AppColors.adminSurfaceElevated,
@@ -2963,9 +3038,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 ),
                 // Tab content
                 Expanded(
-                  child: (_selectedCategoryId == 'all')
-                    ? const Center(child: Text("Velg en spesifikk klasse for å se puljeoppsett og sluttspill.", style: TextStyle(color: AppColors.adminTextSecondary, fontSize: 16)))
-                    : SingleChildScrollView(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(20),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2973,20 +3046,26 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                         if (!hasMatches) ...[
                           _buildSeedingCard(sortedTeams, hasMatches),
                           const SizedBox(height: 16),
-                          _buildGenerateCard(),
+                          if (_selectedCategoryId != 'all') _buildGenerateCard(),
                         ] else ...[
-                          if (_selectedOppsettTab == 'Seeding')
-                            _buildSeedingCard(sortedTeams, hasMatches),
-                            
-                          if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
-                            _buildGroupPreviewCard(groupTeams, sortedGroups),
-                            
-                          if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
-                            _buildPlayoffPreviewCard(allMatches, matchNumById),
-                            
-                          if (_selectedOppsettTab != 'Seeding' && _selectedOppsettTab != 'Gruppespill' && _selectedOppsettTab != 'Sluttspill')
-                            const Center(child: Text("Ingen kamper i denne visningen.")),
-                        ],
+                          if (_selectedCategoryId == 'all') ...[
+                            if (sortedGroups.isNotEmpty) _buildGroupPreviewCard(groupTeams, sortedGroups),
+                            if (sortedGroups.isNotEmpty && hasPlayoffs) const SizedBox(height: 16),
+                            if (hasPlayoffs) _buildPlayoffPreviewCard(allMatches, matchNumById),
+                          ] else ...[
+                            if (_selectedOppsettTab == 'Seeding')
+                              _buildSeedingCard(sortedTeams, hasMatches),
+                              
+                            if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
+                              _buildGroupPreviewCard(groupTeams, sortedGroups),
+                              
+                            if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
+                              _buildPlayoffPreviewCard(allMatches, matchNumById),
+                              
+                            if (_selectedOppsettTab != 'Seeding' && _selectedOppsettTab != 'Gruppespill' && _selectedOppsettTab != 'Sluttspill')
+                              const Center(child: Text("Ingen kamper i denne visningen.")),
+                          ]
+                        ]
                       ],
                     ),
                   ),
@@ -4420,5 +4499,3 @@ class _BracketPainterTopDown extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
-
-
