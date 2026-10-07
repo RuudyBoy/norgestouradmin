@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'match_control_page.dart';
 import 'registrations_page.dart';
 import 'edit_tournament_page.dart';
+import 'schedule_logic.dart';
 
 import 'theme/app_colors.dart';
 import 'theme/responsive_layout.dart';
@@ -1045,7 +1046,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _autoScheduleForCategory(
+    Future<void> _autoScheduleForCategory(
     String categoryId, {
     required int startMinutes,
     required int matchDurationMinutes,
@@ -1053,63 +1054,17 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     required String startDate,
     required String endDate,
     int breakBetweenRounds = 5,
-  }) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('matches')
-        .where('tournament_id', isEqualTo: widget.tournamentId)
-        .where('category_id', isEqualTo: categoryId)
-        .get();
-    if (snap.docs.isEmpty) return;
-
-    final docs = List<DocumentSnapshot>.from(snap.docs)
-      ..sort((a, b) {
-        final ao = _matchRoundOrder(a.data() as Map);
-        final bo = _matchRoundOrder(b.data() as Map);
-        if (ao != bo) return ao.compareTo(bo);
-        final ag = (a.data() as Map)['group'] as String? ?? '';
-        final bg = (b.data() as Map)['group'] as String? ?? '';
-        return ag.compareTo(bg);
-      });
-
-    final Map<int, List<DocumentSnapshot>> byRound = {};
-    for (final doc in docs) {
-      final order = _matchRoundOrder(doc.data() as Map);
-      byRound.putIfAbsent(order, () => []).add(doc);
-    }
-
-    final batch = FirebaseFirestore.instance.batch();
-    int currentMinutesDay1 = startMinutes;
-    int currentMinutesDay2 = startMinutes;
-
-    for (final roundOrder in (byRound.keys.toList()..sort())) {
-      final isDay2 = (startDate != endDate) && (roundOrder >= 10);
-      final matchDate = isDay2 ? endDate : startDate;
-      int currentMinutes = isDay2 ? currentMinutesDay2 : currentMinutesDay1;
-      
-      final roundMatches = byRound[roundOrder]!;
-      final numSlots = (roundMatches.length / courtsCount).ceil();
-      for (int slot = 0; slot < numSlots; slot++) {
-        final slotMinutes = currentMinutes + slot * matchDurationMinutes;
-        for (int court = 0; court < courtsCount; court++) {
-          final idx = slot * courtsCount + court;
-          if (idx >= roundMatches.length) break;
-          batch.update(roundMatches[idx].reference, {
-            'court': 'Bane ${court + 1}',
-            'match_time': _fmtMinutes(slotMinutes),
-            'match_date': matchDate,
-            'scheduled_minutes': slotMinutes,
-          });
-        }
-      }
-      if (isDay2) {
-        currentMinutesDay2 += numSlots * matchDurationMinutes + breakBetweenRounds;
-      } else {
-        currentMinutesDay1 += numSlots * matchDurationMinutes + breakBetweenRounds;
-      }
-    }
-
-    await batch.commit();
-  }
+  }) =>
+      autoScheduleCategory(
+        tournamentId: widget.tournamentId,
+        categoryId: categoryId,
+        startMinutes: startMinutes,
+        matchDurationMinutes: matchDurationMinutes,
+        courtsCount: courtsCount,
+        startDate: startDate,
+        endDate: endDate,
+        breakBetweenRounds: breakBetweenRounds,
+      );
 
   // ─── Reset ────────────────────────────────────────────────────────────────
 
@@ -1986,7 +1941,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById, Map<String, String> catIdToName) {
+    Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById, Map<String, String> catIdToName) {
     final d = matchDoc.data() as Map<String, dynamic>;
     final matchNum = matchNumById[matchDoc.id] ?? (d['match_number'] as int?);
     final stage = d['stage'] as String? ?? '';
@@ -2006,7 +1961,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     String stageLabel = catName.isNotEmpty ? '$catName - ' : '';
     if (stage == 'group') {
       final mType = d['match_type'] as String? ?? '';
-      final matchLabel = {'group_match_1':' – K1','group_match_2':' – K2','group_match_3':' – K3','group_match_4':' – K4'}[mType] ?? '';
+      final matchLabel = {'group_match_1':' - K1','group_match_2':' - K2','group_match_3':' - K3','group_match_4':' - K4'}[mType] ?? '';
       stageLabel += 'Pulje $group$matchLabel';
     }
     if (stage == 'playoff') {
@@ -2030,13 +1985,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       final timeParts = matchTime.split(':');
       if (parts.length == 3 && timeParts.length == 2) {
         try {
-          final scheduledDt = DateTime(
-            int.parse(parts[2]),
-            int.parse(parts[1]),
-            int.parse(parts[0]),
-            int.parse(timeParts[0]),
-            int.parse(timeParts[1]),
-          );
+          final scheduledDt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]), int.parse(timeParts[0]), int.parse(timeParts[1]));
           final diff = DateTime.now().difference(scheduledDt).inMinutes;
           if (diff > 0) delayMinutes = diff;
         } catch (_) {}
@@ -2045,126 +1994,120 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
     Color statusColor = AppColors.adminTextSecondary;
     String statusLabel = 'Planlagt';
-    if (isLive) { 
-      statusColor = AppColors.coral; 
-      statusLabel = '● LIVE'; 
-    } else if (isFinished) { 
-      statusColor = AppColors.green; 
-      statusLabel = isWalkover ? 'Walkover' : 'Ferdig'; 
-    } else if (isPending) {
-      statusLabel = 'Venter...';
-    } else if (delayMinutes != null && delayMinutes > 0) {
-      statusColor = AppColors.adminPrimaryHover;
-      statusLabel = '+${delayMinutes}min';
-    }
+    if (isLive) { statusColor = AppColors.coral; statusLabel = 'LIVE'; }
+    else if (isFinished) { statusColor = AppColors.green; statusLabel = isWalkover ? 'Walkover' : 'Ferdig'; }
+    else if (isPending) { statusLabel = 'Venter...'; }
+    else if (delayMinutes != null && delayMinutes > 0) { statusColor = AppColors.adminPrimaryHover; statusLabel = '+${delayMinutes}min'; }
 
-    Widget teamRow(String name, bool wins, int? score) => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      child: Row(children: [
-        Icon(Icons.sports_volleyball, size: 12,
-            color: wins ? AppColors.adminText : AppColors.adminTextSecondary),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(name,
-              style: TextStyle(
-                  fontSize: 12, fontWeight: wins ? FontWeight.bold : FontWeight.normal,
-                  color: wins ? AppColors.adminText : AppColors.adminTextSecondary),
-              overflow: TextOverflow.ellipsis),
-        ),
-        if (score != null)
-          Text('$score', style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.bold,
-              color: wins ? AppColors.adminText : AppColors.adminTextSecondary)),
-      ]),
+    Widget teamLine(String name, bool wins, int? score) => Row(children: [
+      Expanded(child: Text(name, style: TextStyle(fontSize: 14, fontWeight: wins ? FontWeight.bold : FontWeight.w600, color: wins ? AppColors.adminText : AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis)),
+      if (score != null) Text('$score', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: wins ? AppColors.green : AppColors.adminTextSecondary)),
+    ]);
+
+    Widget infoChip(String text, {Color? color, bool filled = true}) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(color: filled ? AppColors.adminSurfaceElevated : Colors.transparent, borderRadius: BorderRadius.circular(4)),
+      child: Text(text, style: TextStyle(fontSize: 11, color: color ?? AppColors.adminTextSecondary, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
     );
+
+    final accent = isLive ? AppColors.coral : isFinished ? AppColors.green : AppColors.adminSurfaceElevated;
+    final qrUrl = "https://spikedunk.web.app/?matchId=${matchDoc.id}";
+
+    final Widget qrBox = isPending
+        ? SizedBox(width: 108, child: Center(child: Text('QR når lagene\ner klare', textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary))))
+        : InkWell(
+            onTap: () => _showQrDialog(matchDoc.id, teamA, teamB),
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6), border: Border.all(color: AppColors.adminSurfaceElevated)),
+                    child: QrImageView(data: qrUrl, version: QrVersions.auto, size: 92, padding: EdgeInsets.zero, backgroundColor: Colors.white),
+                  ),
+                  const SizedBox(height: 3),
+                  const Text('Scan for dommer', style: TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
+                ],
+              ),
+            ),
+          );
 
     return GestureDetector(
       onTap: () => _showMatchEditDialog(matchDoc),
       child: Container(
-        width: 215,
+        margin: const EdgeInsets.only(bottom: 8),
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: AppColors.adminSurface,
+          color: AppColors.adminSurfaceElevated.withOpacity(0.4),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isLive ? AppColors.coral.withValues(alpha: 0.6)
-                : isFinished ? AppColors.green.withValues(alpha: 0.25)
-                : AppColors.adminSurfaceElevated,
-            width: isLive ? 1.5 : 1,
-          ),
+          border: Border.all(color: isLive ? AppColors.coral.withOpacity(0.6) : isFinished ? AppColors.green.withOpacity(0.25) : AppColors.adminSurfaceElevated, width: isLive ? 1.5 : 1),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 7, 10, 5),
-              child: Row(children: [
-                if (matchNum != null) ...[
-                  Text('K$matchNum',
-                      style: const TextStyle(fontSize: 9, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 5),
-                ],
-                Expanded(
-                  child: Text(stageLabel,
-                      style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary, fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(color: AppColors.adminSurfaceElevated, borderRadius: BorderRadius.circular(4)),
-                  child: Text(court,
-                      style: const TextStyle(fontSize: 9, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)),
-                ),
-              ]),
-            ),
-            Container(height: 1, color: AppColors.adminSurfaceElevated),
-            teamRow(teamA, homeWins, isFinished ? homeScore : null),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 1),
-              child: Text(
-                isFinished ? '$homeScore  –  $awayScore' : (d['match_time'] as String? ?? ''),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: isFinished ? 13 : 11, fontWeight: FontWeight.bold,
-                  color: isFinished ? AppColors.green : AppColors.adminPrimary,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 170,
+                padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                decoration: BoxDecoration(border: Border(left: BorderSide(color: accent, width: 4))),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(children: [
+                      if (matchNum != null) ...[Text('#$matchNum', style: const TextStyle(fontSize: 12, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)), const SizedBox(width: 6)],
+                      Flexible(child: infoChip(statusLabel, color: statusColor)),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.edit, size: 12, color: AppColors.adminTextSecondary),
+                    ]),
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      const Icon(Icons.access_time, size: 12, color: AppColors.adminTextSecondary),
+                      const SizedBox(width: 4),
+                      Flexible(child: Text(matchTime.isEmpty ? '--:--' : (matchDate.isEmpty ? matchTime : '$matchTime – $matchDate'), style: const TextStyle(fontSize: 11, color: AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis)),
+                    ]),
+                    const SizedBox(height: 6),
+                    infoChip(stageLabel.isEmpty ? '-' : stageLabel),
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      const Icon(Icons.location_on, size: 12, color: AppColors.adminTextSecondary),
+                      const SizedBox(width: 4),
+                      Flexible(child: Text(court, style: const TextStyle(fontSize: 11, color: AppColors.adminPrimary, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+                    ]),
+                  ],
                 ),
               ),
-            ),
-            teamRow(teamB, awayWins, isFinished ? awayScore : null),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: const BoxDecoration(
-                color: AppColors.adminSurfaceElevated,
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(10)),
+              Expanded(
+                child: Container(
+                  color: AppColors.adminSurface,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              teamLine(teamA, homeWins, isFinished ? homeScore : null),
+                              Container(height: 1, margin: const EdgeInsets.symmetric(vertical: 8), color: AppColors.adminSurfaceElevated),
+                              teamLine(teamB, awayWins, isFinished ? awayScore : null),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Container(
+                        decoration: const BoxDecoration(border: Border(left: BorderSide(color: AppColors.adminSurfaceElevated))),
+                        child: qrBox,
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              child: Row(children: [
-                Text(statusLabel, style: TextStyle(fontSize: 10, color: statusColor, fontWeight: FontWeight.w600)),
-                const SizedBox(width: 6),
-                const Icon(Icons.edit, size: 10, color: AppColors.adminTextSecondary),
-                const Spacer(),
-                if (!isPending) ...[
-                  GestureDetector(
-                    onTap: () => _showQrDialog(matchDoc.id, teamA, teamB),
-                    child: const Icon(Icons.qr_code, size: 14, color: AppColors.adminTextSecondary),
-                  ),
-                  const SizedBox(width: 10),
-                  GestureDetector(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => MatchControlPage(
-                        matchId: matchDoc.id,
-                        teamAName: teamA,
-                        teamBName: teamB,
-                      )),
-                    ),
-                    child: Icon(Icons.sports_esports, size: 14, 
-                        color: (d['team_a_id'] == 'placeholder' || d['team_b_id'] == 'placeholder') 
-                            ? AppColors.adminTextSecondary 
-                            : AppColors.green),
-                  ),
-                ],
-              ]),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2468,10 +2411,26 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     if (_selectedCategoryId == null) {
       return const Center(child: Text("Velg en klasse i menyen over."));
     }
+    if (_selectedCategoryId == 'all') {
+      return StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+        builder: (ctx, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final docs = snap.data!.docs;
+          if (docs.isEmpty) return const Center(child: Text("Ingen klasser funnet."));
+          return ListView(
+            children: docs.map((doc) => SizedBox(height: 800, child: _buildOppsettWrapperForCategory(doc.id, (doc.data() as Map)['name']))).toList(),
+          );
+        }
+      );
+    }
+    return _buildOppsettWrapperForCategory(_selectedCategoryId!, null);
+  }
+  Widget _buildOppsettWrapperForCategory(String categoryId, String? categoryName) {
 
     return StreamBuilder<QuerySnapshot>(
-      stream: _matchesQuery()
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).where('category_id', isEqualTo: categoryId).snapshots(),
+
       builder: (ctx, snap) {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final allMatches = snap.data!.docs;
@@ -2592,6 +2551,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
         return Column(
           children: [
+            if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
             // ── Generer-knapp ────────────────────────────────────────
             Container(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
@@ -2752,16 +2712,44 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   // ─── Lag-fanen ────────────────────────────────────────────────────────────
 
   Widget _buildTeamsTab() {
+    Widget content;
     if (_selectedCategoryId == null) {
-      return const Center(child: Text("Velg en klasse i menyen over."));
+      content = const Center(child: Text("Velg en klasse i menyen over."));
+    } else if (_selectedCategoryId == 'all') {
+      content = StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+        builder: (ctx, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final docs = snap.data!.docs;
+          if (docs.isEmpty) return const Center(child: Text("Ingen klasser funnet."));
+          return ListView(
+            children: docs.map((doc) => SizedBox(height: 600, child: _buildTeamsTabForCategory(doc.id, (doc.data() as Map)['name']))).toList(),
+          );
+        }
+      );
+    } else {
+      content = _buildTeamsTabForCategory(_selectedCategoryId!, null);
     }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
+          child: _buildInlineCategoryFilter(),
+        ),
+        Expanded(child: content),
+      ],
+    );
+  }
+  Widget _buildTeamsTabForCategory(String categoryId, String? categoryName) {
     return Column(
       children: [
+            if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
         Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              _buildInlineCategoryFilter(),
               const Spacer(),
               ElevatedButton.icon(
                 icon: const Icon(Icons.auto_awesome),
@@ -2775,8 +2763,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         ),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: _teamsQuery()
-                .snapshots(),
+        stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).where('category_id', isEqualTo: categoryId).snapshots(),
+
             builder: (ctx, snap) {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
               final teams = snap.data!.docs;
@@ -2849,17 +2837,45 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   // ─── NY Oppsett-seksjon (kortbasert, ingen sub-tabs) ──────────────────────
 
   Widget _buildOppsettSection() {
+    Widget content;
     if (_selectedCategoryId == null) {
-      return const Center(child: Text("Velg en klasse i menyen over."));
+      content = const Center(child: Text("Velg en klasse."));
+    } else if (_selectedCategoryId == 'all') {
+      content = StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+        builder: (ctx, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final docs = snap.data!.docs;
+          if (docs.isEmpty) return const Center(child: Text("Ingen klasser funnet."));
+          return ListView(
+            children: docs.map((doc) => SizedBox(height: 1000, child: _buildOppsettSectionForCategory(doc.id, (doc.data() as Map)['name']))).toList(),
+          );
+        }
+      );
+    } else {
+      content = _buildOppsettSectionForCategory(_selectedCategoryId!, null);
     }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
+          child: _buildInlineCategoryFilter(),
+        ),
+        Expanded(child: content),
+      ],
+    );
+  }
+  Widget _buildOppsettSectionForCategory(String categoryId, String? categoryName) {
 
     return StreamBuilder<QuerySnapshot>(
-      stream: _teamsQuery()
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).where('category_id', isEqualTo: categoryId).snapshots(),
+
       builder: (ctx, teamSnap) {
         return StreamBuilder<QuerySnapshot>(
-          stream: _matchesQuery()
-              .snapshots(),
+          stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).where('category_id', isEqualTo: categoryId).snapshots(),
+
           builder: (ctx2, matchSnap) {
             if (!teamSnap.hasData || !matchSnap.hasData) {
               return const Center(child: CircularProgressIndicator());
@@ -2898,6 +2914,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+            if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
                 // Top sub-menu bar
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -2914,8 +2931,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       
                       const Spacer(),
                       
-                      _buildInlineCategoryFilter(),
-                      const SizedBox(width: 16),
+
                       
                       if (hasMatches) ...[
                         _buildPublishButtonInline(),
@@ -3224,39 +3240,26 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  Widget _buildPublishButtonInline() {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('categories')
-          .doc(_selectedCategoryId)
-          .snapshots(),
+    Widget _buildPublishButtonInline() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).limit(1).snapshots(),
       builder: (ctx, snap) {
-        if (!snap.hasData) return const SizedBox.shrink();
-        final d = snap.data!.data() as Map<String, dynamic>? ?? {};
-        final isPublished = d['published'] as bool? ?? false;
-
-        if (!isPublished) {
-          return ElevatedButton.icon(
-            icon: const Icon(Icons.check_circle, size: 16),
-            label: const Text("Publiser turnering offentlig"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.green,
-              foregroundColor: Colors.white,
-              elevation: 0,
-            ),
-            onPressed: _publishCategory,
-          );
-        } else {
-          return OutlinedButton.icon(
-            icon: const Icon(Icons.lock_outline, size: 16),
-            label: const Text("Avpubliser"),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.adminTextSecondary,
-              side: const BorderSide(color: AppColors.adminSurfaceElevated),
-            ),
-            onPressed: _unpublishCategory,
-          );
+        bool isPub = false;
+        if (snap.hasData && snap.data!.docs.isNotEmpty) {
+          isPub = (snap.data!.docs.first.data() as Map)['published'] == true;
         }
+        return ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isPub ? AppColors.adminSurfaceElevated : AppColors.coral,
+            foregroundColor: isPub ? AppColors.adminTextSecondary : Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            elevation: 0,
+          ),
+          icon: Icon(isPub ? Icons.visibility_off : Icons.visibility, size: 20),
+          label: Text(isPub ? "Skjul turnering" : "Publiser turnering offentlig"),
+          onPressed: () { if (isPub) _unpublishCategory(); else _publishCategory(); },
+        );
       },
     );
   }
@@ -3853,116 +3856,21 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   // ─── Publisering ───────────────────────────────────────────────────────────
 
-  Future<void> _publishCategory() async {
-    if (_selectedCategoryId == null) return;
-    
-    if (_selectedCategoryId == 'all') {
-      final batch = FirebaseFirestore.instance.batch();
-      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
-      for (final doc in snap.docs) {
-        batch.update(doc.reference, {'published': true});
-      }
-      await batch.commit();
-      _snack("Oppsett for alle klasser publisert! Synlig for alle i appen.");
-      return;
-    }
-
-    final currentCat = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
-    final currentCatName = currentCat.data()?['name'] ?? 'Valgt klasse';
-
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Publiser oppsett"),
-        content: const Text("Hvem vil du publisere oppsettet for?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text("Avbryt")),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'current'),
-            child: Text("Bare $currentCatName"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.green, foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(ctx, 'all'),
-            child: const Text("Alle/Begge klasser"),
-          ),
-        ],
-      ),
-    );
-
-    if (result == 'cancel' || result == null) return;
-
+    Future<void> _publishCategory() async {
+    final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
     final batch = FirebaseFirestore.instance.batch();
-    if (result == 'current') {
-      batch.update(FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId!), {'published': true});
-      await batch.commit();
-      _snack("Oppsett for $currentCatName publisert! Synlig for alle i appen.");
-    } else if (result == 'all') {
-      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
-      for (final doc in snap.docs) {
-        batch.update(doc.reference, {'published': true});
-      }
-      await batch.commit();
-      _snack("Oppsett for alle klasser publisert! Synlig for alle i appen.");
-    }
+    for (var doc in snap.docs) { batch.update(doc.reference, {'published': true}); }
+    await batch.commit();
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hele turneringen er nå publisert offentlig')));
   }
 
   Future<void> _unpublishCategory() async {
-    if (_selectedCategoryId == null) return;
-    
-    if (_selectedCategoryId == 'all') {
-      final batch = FirebaseFirestore.instance.batch();
-      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
-      for (final doc in snap.docs) {
-        batch.update(doc.reference, {'published': false});
-      }
-      await batch.commit();
-      _snack("Oppsett for alle klasser avpublisert.");
-      return;
-    }
-
-    final currentCat = await FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId).get();
-    final currentCatName = currentCat.data()?['name'] ?? 'Valgt klasse';
-
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Avpubliser oppsett?"),
-        content: const Text("Kampoppsettet skjules fra appen.\nHvem vil du avpublisere for?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text("Avbryt")),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'current'),
-            child: Text("Bare $currentCatName"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
-            onPressed: () => Navigator.pop(ctx, 'all'),
-            child: const Text("Alle/Begge klasser"),
-          ),
-        ],
-      ),
-    );
-
-    if (result == 'cancel' || result == null) return;
-
+    final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
     final batch = FirebaseFirestore.instance.batch();
-    if (result == 'current') {
-      batch.update(FirebaseFirestore.instance.collection('categories').doc(_selectedCategoryId!), {'published': false});
-      await batch.commit();
-      _snack("Oppsett for $currentCatName avpublisert.");
-    } else if (result == 'all') {
-      final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
-      for (final doc in snap.docs) {
-        batch.update(doc.reference, {'published': false});
-      }
-      await batch.commit();
-      _snack("Oppsett for alle klasser avpublisert.");
-    }
+    for (var doc in snap.docs) { batch.update(doc.reference, {'published': false}); }
+    await batch.commit();
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hele turneringen er nå skjult')));
   }
-
-  // ─── Oppsett – hjelpemetoder ──────────────────────────────────────────────
 
   String _oppsettRoundLabel(String r) => const {
     'omspill': 'Playoff', 'r16': '1/16', 'r8': '1/8',
@@ -4513,7 +4421,5 @@ class _BracketPainterTopDown extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
-
-
 
 
