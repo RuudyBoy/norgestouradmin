@@ -1929,8 +1929,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Wrap(
-                spacing: 8, runSpacing: 8,
+              child: Column(
                 children: byTime[time]!.map((m) => _buildScheduleCard(m, matchNumById, catIdToName)).toList(),
               ),
             ),
