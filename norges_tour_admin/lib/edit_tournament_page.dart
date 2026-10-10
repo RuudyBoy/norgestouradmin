@@ -31,6 +31,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
   late String _selectedTypeId;
   late bool _hasDivisionPlay;
   late int _div1Size;
+  late int _interleaveRounds;
   late String _tournamentStatus;
   late String _registrationStatus;
 
@@ -64,6 +65,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     _selectedTypeId = d['tournament_type'] as String? ?? 'nt_master';
     _hasDivisionPlay = d['has_division_play'] as bool? ?? true;
     _div1Size = (d['div1_size'] as num?)?.toInt() ?? 16;
+    _interleaveRounds = (d['interleave_rounds'] as num?)?.toInt() ?? 0;
     _tournamentStatus = d['status'] as String? ?? 'upcoming';
     _registrationStatus = d['registration_status'] as String? ?? 'open';
 
@@ -190,6 +192,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         'tournament_type_label': _selectedTypeId == 'custom' ? _customTypeCtrl.text.trim() : (_typeLabels[_selectedTypeId] ?? _selectedTypeId),
         'has_division_play': _hasDivisionPlay,
         'div1_size': _hasDivisionPlay ? _div1Size : 0,
+        'interleave_rounds': _interleaveRounds,
         'status': _tournamentStatus,
         'registration_status': _registrationStatus,
         if (_startDate != null) 'start_date': _fmtDate(_startDate!),
@@ -574,6 +577,21 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        DropdownButtonFormField<int>(
+          initialValue: _interleaveRounds,
+          decoration: const InputDecoration(
+            labelText: "Rullering av klasser",
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.sync),
+          ),
+          items: const [
+            DropdownMenuItem(value: 0, child: Text("Ingen rullering (spiller samtidig pǾ sine baner)")),
+            DropdownMenuItem(value: 1, child: Text("Annenhver runde (1 runde pr klasse)")),
+            DropdownMenuItem(value: 2, child: Text("Hver 2. runde (2 runder pr klasse)")),
+          ],
+          onChanged: (v) => setState(() => _interleaveRounds = v ?? 0),
+        ),
+        const SizedBox(height: 16),
         _section("Bane- og tidsoppsett per klasse"),
         const SizedBox(height: 12),
         StreamBuilder<QuerySnapshot>(
@@ -626,8 +644,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                               selected: isSel,
                               onSelected: (val) async {
                                 final newCourts = List<int>.from(selectedCourts);
-                                if (val) newCourts.add(courtNum);
-                                else newCourts.remove(courtNum);
+                                if (val) { newCourts.add(courtNum); }
+                                else { newCourts.remove(courtNum); }
                                 newCourts.sort();
                                 await cat.reference.update({'court_numbers': newCourts});
                               },

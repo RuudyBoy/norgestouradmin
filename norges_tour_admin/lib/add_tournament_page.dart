@@ -140,6 +140,9 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
   int _matchDurationMinutes = 60;
   bool _hasDivisionPlay = true;
   int _div1Size = 16;
+  int _interleaveRounds = 0;
+  final Map<String, List<int>> _categoryCourts = {};
+  final Map<String, TimeOfDay> _categoryStartTimes = {};
 
   DateTime? _startDate;
   DateTime? _endDate;
@@ -293,6 +296,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
         'match_duration_minutes': _matchDurationMinutes,
         'has_division_play': _hasDivisionPlay,
         'div1_size': _hasDivisionPlay ? _div1Size : 0,
+        'interleave_rounds': _interleaveRounds,
         'status': 'upcoming',
         'registration_status': 'open',
         'created_at': FieldValue.serverTimestamp(),
@@ -305,14 +309,28 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
       final batch = FirebaseFirestore.instance.batch();
       for (final name in _categoryNames) {
         final catRef = FirebaseFirestore.instance.collection('categories').doc();
-        batch.set(catRef, {
+        final catData = <String, dynamic>{
           'tournament_id': tourRef.id,
           'name': name,
           'gender': name.toLowerCase().contains('dame') || name.toLowerCase().contains('kvinne') ? 'K' : 'M',
           'max_teams': maxPerClass,
           'tournament_type': _selectedTypeId,
           'created_at': FieldValue.serverTimestamp(),
-        });
+        };
+
+        if (_categoryCourts.containsKey(name)) {
+          catData['court_numbers'] = _categoryCourts[name];
+        } else {
+          catData['court_numbers'] = List.generate(_courtsCount, (i) => i + 1);
+        }
+
+        if (_categoryStartTimes.containsKey(name) && _categoryStartTimes[name] != null) {
+          catData['round_start_times'] = {
+            '1': fmtTime(_categoryStartTimes[name]!)
+          };
+        }
+
+        batch.set(catRef, catData);
       }
       await batch.commit();
 
@@ -585,6 +603,99 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                     ],
                     onChanged: (v) => setState(() => _matchDurationMinutes = v ?? 60),
                   ),
+                ),
+                const SizedBox(height: 16),
+
+                DropdownButtonFormField<int>(
+                  initialValue: _interleaveRounds,
+                  decoration: const InputDecoration(
+                    labelText: "Rullering av klasser",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.sync),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text("Ingen rullering (spiller samtidig pǾ sine baner)")),
+                    DropdownMenuItem(value: 1, child: Text("Annenhver runde (1 runde pr klasse)")),
+                    DropdownMenuItem(value: 2, child: Text("Hver 2. runde (2 runder pr klasse)")),
+                  ],
+                  onChanged: (v) => setState(() => _interleaveRounds = v ?? 0),
+                ),
+                const SizedBox(height: 16),
+                
+                _sectionTitle("Bane- og tidsoppsett per klasse"),
+                const SizedBox(height: 16),
+                Column(
+                  children: _categoryNames.map((name) {
+                    final selectedCourts = _categoryCourts[name] ?? List.generate(_courtsCount, (i) => i + 1);
+                    final selectedStart = _categoryStartTimes[name];
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                      ),
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            const SizedBox(height: 16),
+                            const Text("Baner for denne klassen:", style: TextStyle(fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              children: List.generate(_courtsCount, (i) {
+                                final courtNum = i + 1;
+                                final isSel = selectedCourts.contains(courtNum);
+                                return FilterChip(
+                                  label: Text("Bane $courtNum"),
+                                  selected: isSel,
+                                  onSelected: (val) {
+                                    setState(() {
+                                      final newCourts = List<int>.from(selectedCourts);
+                                      if (val) { newCourts.add(courtNum); }
+                                      else { newCourts.remove(courtNum); }
+                                      newCourts.sort();
+                                      _categoryCourts[name] = newCourts;
+                                    });
+                                  },
+                                );
+                              }),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text("Frste kamp starttid (valgfritt):", style: TextStyle(fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Text(selectedStart != null ? "${selectedStart.hour.toString().padLeft(2,'0')}:${selectedStart.minute.toString().padLeft(2,'0')}" : "Bruk turneringens standard", style: const TextStyle(fontSize: 14)),
+                                const Spacer(),
+                                IconButton(
+                                  icon: const Icon(Icons.access_time),
+                                  onPressed: () async {
+                                    final time = await showTimePicker(context: context, initialTime: selectedStart ?? const TimeOfDay(hour: 9, minute: 0));
+                                    if (time != null) {
+                                      setState(() {
+                                        _categoryStartTimes[name] = time;
+                                      });
+                                    }
+                                  },
+                                ),
+                                if (selectedStart != null)
+                                  IconButton(icon: const Icon(Icons.clear, color: Colors.red), onPressed: () {
+                                    setState(() {
+                                      _categoryStartTimes.remove(name);
+                                    });
+                                  }),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
                 const SizedBox(height: 16),
 

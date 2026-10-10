@@ -497,11 +497,11 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     await batch.commit();
     _snack("$numGroups grupper + sluttspillkryssninger generert!");
 
-    // Auto-schedule if tournament has start_time configured
+    // Auto-schedule all categories globally if tournament has start_time configured
     final tourDoc = await FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).get();
     final td = tourDoc.data() ?? {};
     final startTimeStr = td['start_time'] as String?;
-    if (startTimeStr != null && _selectedCategoryId != null) {
+    if (startTimeStr != null) {
       final parts = startTimeStr.split(':');
       if (parts.length == 2) {
         final startMinutes = (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts[1]) ?? 0);
@@ -509,13 +509,15 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         final courts = (td['courts_count'] as num?)?.toInt() ?? 4;
         final startDate = td['start_date'] as String? ?? 'Kampdag';
         final endDate = td['end_date'] as String? ?? startDate;
-        await _autoScheduleForCategory(
-          _selectedCategoryId!,
+        final interleave = (td['interleave_rounds'] as num?)?.toInt() ?? 0;
+        await autoScheduleTournament(
+          tournamentId: widget.tournamentId,
           startMinutes: startMinutes,
           matchDurationMinutes: duration,
           courtsCount: courts,
           startDate: startDate,
           endDate: endDate,
+          interleaveRounds: interleave,
         );
         _snack("Kampskjema tildelt automatisk fra $startTimeStr.");
       }
@@ -1043,7 +1045,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
   }
 
-    Future<void> _autoScheduleForCategory(
+  Future<void> _autoScheduleForCategory(
     String categoryId, {
     required int startMinutes,
     required int matchDurationMinutes,
@@ -1051,17 +1053,24 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     required String startDate,
     required String endDate,
     int breakBetweenRounds = 5,
-  }) =>
-      autoScheduleCategory(
-        tournamentId: widget.tournamentId,
-        categoryId: categoryId,
-        startMinutes: startMinutes,
-        matchDurationMinutes: matchDurationMinutes,
-        courtsCount: courtsCount,
-        startDate: startDate,
-        endDate: endDate,
-        breakBetweenRounds: breakBetweenRounds,
-      );
+  }) async {
+    // Hent interleave-innstilling fra turneringen
+    final tourDoc = await FirebaseFirestore.instance
+        .collection('tournaments')
+        .doc(widget.tournamentId)
+        .get();
+    final interleave = (tourDoc.data()?['interleave_rounds'] as num?)?.toInt() ?? 0;
+    return autoScheduleTournament(
+      tournamentId: widget.tournamentId,
+      startMinutes: startMinutes,
+      matchDurationMinutes: matchDurationMinutes,
+      courtsCount: courtsCount,
+      startDate: startDate,
+      endDate: endDate,
+      breakBetweenRounds: breakBetweenRounds,
+      interleaveRounds: interleave,
+    );
+  }
 
   // ─── Reset ────────────────────────────────────────────────────────────────
 

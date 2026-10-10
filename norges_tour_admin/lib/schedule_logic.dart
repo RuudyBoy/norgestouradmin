@@ -1,4 +1,4 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Kampprogram-innstillinger for én klasse.
 ///
@@ -98,35 +98,64 @@ int matchRoundOrder(Map d) {
   return 99;
 }
 
-/// Setter bane, tid og dato på alle kampene i én klasse.
-/// Bruker klassens egne baner og starttider per runde når de er satt.
-Future<void> autoScheduleCategory({
+// ─── Intern hjelpeklasse ────────────────────────────────────────────────────
+class _ScheduleTask {
+  final String catId;
+  final int roundOrder;
+  _ScheduleTask(this.catId, this.roundOrder);
+}
+
+/// Planlegger HELE turneringen globalt (alle klasser samtidig).
+///
+/// Støtter:
+///  - Separate baner per klasse (ingen overlapp)
+///  - Rullering mellom klasser (interleaveRounds = 0 / 1 / 2)
+///  - Egendefinerte starttider per runde per klasse
+///
+/// [interleaveRounds]:
+///   0 = ingen rullering (klasse A alle runder, deretter klasse B alle runder)
+///   1 = annenhver runde  (A runde 1, B runde 1, A runde 2, B runde 2 …)
+///   2 = to-og-to         (A runde 1+2, B runde 1+2, A runde 3, …)
+Future<void> autoScheduleTournament({
   required String tournamentId,
-  required String categoryId,
   required int startMinutes,
   required int matchDurationMinutes,
   required int courtsCount,
   required String startDate,
   required String endDate,
   int breakBetweenRounds = 5,
+  int interleaveRounds = 0,
 }) async {
   final db = FirebaseFirestore.instance;
 
-  final catDoc = await db.collection('categories').doc(categoryId).get();
-  final sched = CategorySchedule.fromMap(catDoc.data());
-  final courts = sched.courts.isNotEmpty
-      ? sched.courts
-      : List<int>.generate(courtsCount, (i) => i + 1);
+  // --- Hent klasser og kampene ---
+  final catSnap = await db
+      .collection('categories')
+      .where('tournament_id', isEqualTo: tournamentId)
+      .get();
+  final catSchedules = <String, CategorySchedule>{};
+  for (final doc in catSnap.docs) {
+    catSchedules[doc.id] = CategorySchedule.fromMap(doc.data());
+  }
 
   final snap = await db
       .collection('matches')
       .where('tournament_id', isEqualTo: tournamentId)
-      .where('category_id', isEqualTo: categoryId)
       .get();
   if (snap.docs.isEmpty) return;
 
-  final docs = List<DocumentSnapshot>.from(snap.docs)
-    ..sort((a, b) {
+  // --- Organiser kamper per klasse og runde ---
+  final matchesByCategory = <String, List<DocumentSnapshot>>{};
+  for (final doc in snap.docs) {
+    final catId = (doc.data() as Map)['category_id'] as String;
+    matchesByCategory.putIfAbsent(catId, () => []).add(doc);
+  }
+
+  final byRoundByCat = <String, Map<int, List<DocumentSnapshot>>>{};
+  final allRoundOrders = <int>{};
+
+  for (final catId in matchesByCategory.keys) {
+    final docs = matchesByCategory[catId]!..sort((a, b) {
       final ao = matchRoundOrder(a.data() as Map);
       final bo = matchRoundOrder(b.data() as Map);
       if (ao != bo) return ao.compareTo(bo);
@@ -135,29 +164,96 @@ Future<void> autoScheduleCategory({
       return ag.compareTo(bg);
     });
 
-  final Map<int, List<DocumentSnapshot>> byRound = {};
-  for (final doc in docs) {
-    byRound.putIfAbsent(matchRoundOrder(doc.data() as Map), () => []).add(doc);
+    final byRound = <int, List<DocumentSnapshot>>{};
+    for (final doc in docs) {
+      final order = matchRoundOrder(doc.data() as Map);
+      byRound.putIfAbsent(order, () => []).add(doc);
+      allRoundOrders.add(order);
+    }
+    byRoundByCat[catId] = byRound;
+  }
+
+  final sortedRounds = allRoundOrders.toList()..sort();
+  // Stabil rekkefølge på klasser (gjerne sortert på navn)
+  final catIds = matchesByCategory.keys.toList()..sort();
+
+  // --- Bygg opp liste av oppgaver i riktig rulleringsrekkefølge ---
+  final tasks = <_ScheduleTask>[];
+
+  if (interleaveRounds == 0) {
+    // Én klasse hele veien, deretter neste
+    for (final catId in catIds) {
+      for (final r in sortedRounds) {
+        if (byRoundByCat[catId]?.containsKey(r) == true) {
+          tasks.add(_ScheduleTask(catId, r));
+        }
+      }
+    }
+  } else {
+    // Rullering: klasse A [interleaveRounds] runder, klasse B [interleaveRounds] runder …
+    int rIdx = 0;
+    while (rIdx < sortedRounds.length) {
+      for (final catId in catIds) {
+        for (int i = 0; i < interleaveRounds; i++) {
+          final idx = rIdx + i;
+          if (idx < sortedRounds.length) {
+            final r = sortedRounds[idx];
+            if (byRoundByCat[catId]?.containsKey(r) == true) {
+              tasks.add(_ScheduleTask(catId, r));
+            }
+          }
+        }
+      }
+      rIdx += interleaveRounds;
+    }
+  }
+
+  // --- Per-bane-klokke (sikrer at ingen bane dobbelbooker) ---
+  // courtTimesDay1/2[n] = tidligste ledige minutt på bane n
+  final courtTimesDay1 = <int, int>{};
+  final courtTimesDay2 = <int, int>{};
+  for (int i = 1; i <= courtsCount; i++) {
+    courtTimesDay1[i] = startMinutes;
+    courtTimesDay2[i] = startMinutes;
   }
 
   final batch = db.batch();
-  int currentMinutesDay1 = startMinutes;
-  int currentMinutesDay2 = startMinutes;
 
-  for (final roundOrder in (byRound.keys.toList()..sort())) {
+  for (final task in tasks) {
+    final catId = task.catId;
+    final roundOrder = task.roundOrder;
+    final roundMatches = byRoundByCat[catId]![roundOrder]!;
+
+    final sched = catSchedules[catId] ?? const CategorySchedule();
+    final courts = sched.courts.isNotEmpty
+        ? sched.courts
+        : List<int>.generate(courtsCount, (i) => i + 1);
+
     final isDay2 = (startDate != endDate) && (roundOrder >= 10);
     final matchDate = isDay2 ? endDate : startDate;
-    int currentMinutes = isDay2 ? currentMinutesDay2 : currentMinutesDay1;
+    final courtTimes = isDay2 ? courtTimesDay2 : courtTimesDay1;
 
-    // Egendefinert starttid for akkurat denne runden
+    // Egendefinert starttid for runden – skyv alle klassens baner frem til denne
     final rk = CategorySchedule.keyForOrder(roundOrder);
     final override = rk == null ? null : parseHm(sched.roundTimes[rk]);
-    if (override != null) currentMinutes = override;
+    if (override != null) {
+      for (final c in courts) {
+        if ((courtTimes[c] ?? startMinutes) < override) {
+          courtTimes[c] = override;
+        }
+      }
+    }
 
-    final roundMatches = byRound[roundOrder]!;
+    // Tidligste ledige minutt for ALLE klassens baner (ingen bane kan starte
+    // før den er ferdig med forrige kamp)
+    int baseMinutes = courts.fold<int>(
+      0,
+      (prev, c) => (courtTimes[c] ?? startMinutes) > prev ? (courtTimes[c] ?? startMinutes) : prev,
+    );
+
     final numSlots = (roundMatches.length / courts.length).ceil();
     for (int slot = 0; slot < numSlots; slot++) {
-      final slotMinutes = currentMinutes + slot * matchDurationMinutes;
+      final slotMinutes = baseMinutes + slot * matchDurationMinutes;
       for (int c = 0; c < courts.length; c++) {
         final idx = slot * courts.length + c;
         if (idx >= roundMatches.length) break;
@@ -169,13 +265,35 @@ Future<void> autoScheduleCategory({
         });
       }
     }
-    final next = currentMinutes + numSlots * matchDurationMinutes + breakBetweenRounds;
-    if (isDay2) {
-      currentMinutesDay2 = next;
-    } else {
-      currentMinutesDay1 = next;
+
+    // Oppdater bane-klokken etter denne rundeblokkens kamper
+    final endMinutes = baseMinutes + numSlots * matchDurationMinutes + breakBetweenRounds;
+    for (final c in courts) {
+      courtTimes[c] = endMinutes;
     }
   }
 
   await batch.commit();
 }
+
+/// Planlegger kun én klasse (brukes f.eks. ved manuell re-schedule).
+/// Kaller den globale scheduleren for bare den klassen.
+Future<void> autoScheduleCategory({
+  required String tournamentId,
+  required String categoryId,
+  required int startMinutes,
+  required int matchDurationMinutes,
+  required int courtsCount,
+  required String startDate,
+  required String endDate,
+  int breakBetweenRounds = 5,
+}) => autoScheduleTournament(
+      tournamentId: tournamentId,
+      startMinutes: startMinutes,
+      matchDurationMinutes: matchDurationMinutes,
+      courtsCount: courtsCount,
+      startDate: startDate,
+      endDate: endDate,
+      breakBetweenRounds: breakBetweenRounds,
+      interleaveRounds: 0,
+    );

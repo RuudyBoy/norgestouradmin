@@ -465,10 +465,18 @@ class _TournamentCard extends StatelessWidget {
                       );
                       if (confirm == true && context.mounted) {
                         try {
-                          await FirebaseFirestore.instance
-                              .collection('tournaments')
-                              .doc(id)
-                              .delete();
+                          // Finn og slett alle relaterte dokumenter (matches, teams, categories)
+                          final batch = FirebaseFirestore.instance.batch();
+                          final matches = await FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: id).get();
+                          for (var doc in matches.docs) batch.delete(doc.reference);
+                          final teams = await FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: id).get();
+                          for (var doc in teams.docs) batch.delete(doc.reference);
+                          final categories = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: id).get();
+                          for (var doc in categories.docs) batch.delete(doc.reference);
+                          
+                          batch.delete(FirebaseFirestore.instance.collection('tournaments').doc(id));
+                          await batch.commit();
+                          
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
