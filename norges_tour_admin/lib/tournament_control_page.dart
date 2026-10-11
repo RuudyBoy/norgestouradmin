@@ -330,7 +330,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: Colors.white),
           onPressed: () {
             FirebaseFirestore.instance.collection('teams').doc(teamId).delete();
             Navigator.pop(ctx);
@@ -1086,7 +1086,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: AppColors.adminText),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: Colors.white),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Nullstill"),
           ),
@@ -2760,7 +2760,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 icon: const Icon(Icons.auto_awesome),
                 label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.adminPrimaryHover, foregroundColor: AppColors.adminText),
+                    backgroundColor: AppColors.adminPrimaryHover, foregroundColor: Colors.white),
                 onPressed: _autoGenerateTeams,
               ),
             ],
@@ -2868,6 +2868,13 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
           child: _buildInlineCategoryFilter(),
         ),
+        if (_selectedCategoryId == 'all')
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _matchesQuery().snapshots(),
+            builder: (ctx, snap) => _buildOppsettToolbar(
+              showPublish: snap.hasData && snap.data!.docs.isNotEmpty,
+            ),
+          ),
         Expanded(child: content),
       ],
     );
@@ -2921,52 +2928,8 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               children: [
             if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
                 // Top sub-menu bar
-                if (_selectedCategoryId != 'all') Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  decoration: const BoxDecoration(
-                    color: AppColors.adminSurfaceElevated,
-                  ),
-                  child: Row(
-                    children: [
-                      _buildOppsettSubTab('Gruppespill'),
-                      const SizedBox(width: 8),
-                      _buildOppsettSubTab('Sluttspill'),
-                      const SizedBox(width: 8),
-                      _buildOppsettSubTab('Seeding'),
-                      
-                      const Spacer(),
-                      
-
-                      
-                      if (hasMatches) ...[
-                        _buildPublishButtonInline(),
-                        const SizedBox(width: 12),
-                      ],
-                      
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.edit, size: 16),
-                        label: const Text("Rediger turnering"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.adminSurface,
-                          foregroundColor: AppColors.adminPrimary,
-                          elevation: 0,
-                          side: const BorderSide(color: AppColors.adminPrimary),
-                        ),
-                        onPressed: () async {
-                          final doc = await FirebaseFirestore.instance
-                              .collection('tournaments').doc(widget.tournamentId).get();
-                          if (!context.mounted) return;
-                          Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => EditTournamentPage(
-                              tournamentId: widget.tournamentId,
-                              initialData: doc.data() ?? {},
-                            ),
-                          ));
-                        },
-                      ),
-                    ],
-                  ),
-                ),
+                if (_selectedCategoryId != 'all')
+                  _buildOppsettToolbar(showPublish: hasMatches),
                 // Tab content
                 Expanded(
                   child: SingleChildScrollView(
@@ -2979,23 +2942,23 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                           const SizedBox(height: 16),
                           if (_selectedCategoryId != 'all') _buildGenerateCard(),
                         ] else ...[
-                          if (_selectedCategoryId == 'all') ...[
-                            if (sortedGroups.isNotEmpty) _buildGroupPreviewCard(groupTeams, sortedGroups),
-                            if (sortedGroups.isNotEmpty && hasPlayoffs) const SizedBox(height: 16),
-                            if (hasPlayoffs) _buildPlayoffPreviewCard(allMatches, matchNumById),
-                          ] else ...[
-                            if (_selectedOppsettTab == 'Seeding')
-                              _buildSeedingCard(sortedTeams, hasMatches),
-                              
-                            if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
-                              _buildGroupPreviewCard(groupTeams, sortedGroups),
-                              
-                            if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
-                              _buildPlayoffPreviewCard(allMatches, matchNumById),
-                              
-                            if (_selectedOppsettTab != 'Seeding' && _selectedOppsettTab != 'Gruppespill' && _selectedOppsettTab != 'Sluttspill')
-                              const Center(child: Text("Ingen kamper i denne visningen.")),
-                          ]
+                          if (_selectedOppsettTab == 'Seeding')
+                            _buildSeedingCard(sortedTeams, hasMatches),
+
+                          if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
+                            _buildGroupPreviewCard(groupTeams, sortedGroups),
+
+                          if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
+                            _buildPlayoffPreviewCard(allMatches, matchNumById),
+
+                          if ((_selectedOppsettTab == 'Gruppespill' && sortedGroups.isEmpty) ||
+                              (_selectedOppsettTab == 'Sluttspill' && !hasPlayoffs))
+                            const Center(child: Text("Ingen kamper i denne visningen.")),
+
+                          if (_selectedOppsettTab != 'Seeding' &&
+                              _selectedOppsettTab != 'Gruppespill' &&
+                              _selectedOppsettTab != 'Sluttspill')
+                            const Center(child: Text("Ingen kamper i denne visningen.")),
                         ]
                       ],
                     ),
@@ -3270,6 +3233,55 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           onPressed: () { if (isPub) _unpublishCategory(); else _publishCategory(); },
         );
       },
+    );
+  }
+
+  Widget _buildOppsettToolbar({required bool showPublish}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: const BoxDecoration(
+        color: AppColors.adminSurfaceElevated,
+      ),
+      child: Row(
+        children: [
+          _buildOppsettSubTab('Gruppespill'),
+          const SizedBox(width: 8),
+          _buildOppsettSubTab('Sluttspill'),
+          const SizedBox(width: 8),
+          _buildOppsettSubTab('Seeding'),
+          const Spacer(),
+          if (showPublish) ...[
+            _buildPublishButtonInline(),
+            const SizedBox(width: 12),
+          ],
+          ElevatedButton.icon(
+            icon: const Icon(Icons.edit, size: 16),
+            label: const Text("Rediger turnering"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.adminSurface,
+              foregroundColor: AppColors.adminPrimary,
+              elevation: 0,
+              side: const BorderSide(color: AppColors.adminPrimary),
+            ),
+            onPressed: () async {
+              final doc = await FirebaseFirestore.instance
+                  .collection('tournaments')
+                  .doc(widget.tournamentId)
+                  .get();
+              if (!context.mounted) return;
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => EditTournamentPage(
+                    tournamentId: widget.tournamentId,
+                    initialData: doc.data() ?? {},
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
