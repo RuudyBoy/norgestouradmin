@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'theme/app_text_styles.dart';
+import 'theme/admin_ui.dart';
 import 'theme/app_colors.dart';
 
 class AdminLoginPage extends StatefulWidget {
@@ -62,13 +63,14 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
             constraints: const BoxConstraints(maxWidth: 400),
             padding: const EdgeInsets.all(32),
             decoration: BoxDecoration(
-              color: Theme.of(context).cardTheme.color,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
+              color: AppColors.adminSurface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.adminOutline),
+              boxShadow: const [
                 BoxShadow(
-                  color: AppColors.adminText.withValues(alpha: 0.1),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
+                  color: Color(0x14111827),
+                  blurRadius: 24,
+                  offset: Offset(0, 12),
                 )
               ],
             ),
@@ -76,12 +78,19 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.security, size: 64, color: Theme.of(context).colorScheme.primary),
+                const Center(
+                  child: AdminIconTile(
+                    icon: Icons.sports_volleyball,
+                    size: 56,
+                    iconSize: 28,
+                    radius: 12,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Text(
                   "Spike Dunk Admin",
                   textAlign: TextAlign.center,
-                  style: AppText.dispH1(),
+                  style: AdminText.ui(size: 26, weight: FontWeight.w700),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -116,13 +125,13 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 24),
                     decoration: BoxDecoration(
-                      color: AppColors.adminPrimary,
-                      border: Border.all(color: AppColors.adminPrimary),
-                      borderRadius: BorderRadius.circular(8),
+                      color: AppColors.adminDanger.withValues(alpha: 0.08),
+                      border: Border.all(color: AppColors.adminDanger.withValues(alpha: 0.3)),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       _errorMessage!,
-                      style: TextStyle(color: AppColors.adminPrimaryHover),
+                      style: const TextStyle(color: AppColors.adminDangerText),
                       textAlign: TextAlign.center,
                     ),
                   ),

@@ -8,17 +8,24 @@ import 'registrations_page.dart';
 import 'edit_tournament_page.dart';
 import 'schedule_logic.dart';
 
+import 'package:firebase_auth/firebase_auth.dart';
+import 'admin_shell.dart';
 import 'theme/app_colors.dart';
+import 'theme/admin_ui.dart';
 import 'theme/responsive_layout.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
   final String tournamentName;
 
+  /// Valgfri startfane (0=Oversikt 1=Kampprogram 2=Oppsett 3=Lag). Standard: Oppsett.
+  final int? initialNavIndex;
+
   const TournamentControlPage({
     super.key,
     required this.tournamentId,
     required this.tournamentName,
+    this.initialNavIndex,
   });
 
   @override
@@ -50,9 +57,17 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   // Seeding-bytte: lagrer det valgte laget (første klikk)
   DocumentSnapshot? _swapSelectionDoc;
 
+  // Rene visningsvalg (påvirker ikke data)
+  String? _selectedScheduleDate;
+  String _scheduleQuery = '';
+  String _teamQuery = '';
+  String _teamGroupFilter = 'alle';
+  String _teamSort = 'seed';
+
   @override
   void initState() {
     super.initState();
+    if (widget.initialNavIndex != null) _selectedNavIndex = widget.initialNavIndex!;
     _setupFinishedMatchListener();
   }
 
@@ -330,7 +345,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Avbryt")),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminPrimary, foregroundColor: Colors.white),
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminDanger, foregroundColor: Colors.white),
           onPressed: () {
             FirebaseFirestore.instance.collection('teams').doc(teamId).delete();
             Navigator.pop(ctx);
@@ -358,7 +373,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             children: [
               SizedBox(height: 200, width: 200, child: QrImageView(data: url, version: QrVersions.auto, size: 200)),
               const SizedBox(height: 12),
-              SelectableText(url, style: const TextStyle(fontSize: 10, color: AppColors.adminSurface)),
+              SelectableText(url, style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
             ],
           ),
         ),
@@ -1719,16 +1734,41 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               allMatches = allMatches.where((m) => (m.data() as Map)['category_id'] == _selectedCategoryId).toList();
             }
 
+        // Kampnummer (fra alle kamper i valgt klasse, før filtrering)
+        final matchNumById = <String, int>{};
+        for (final m in allMatches) {
+          final num = (m.data() as Map)['match_number'] as int?;
+          if (num != null) matchNumById[m.id] = num;
+        }
 
+        // ── Kampdager ──
+        final Map<String, List<DocumentSnapshot>> byDateAll = {};
+        for (final m in allMatches) {
+          final date = (m.data() as Map)['match_date'] as String? ?? 'Kampdag';
+          byDateAll.putIfAbsent(date, () => []).add(m);
+        }
+        int dateKey(String s) {
+          final p = s.split('.');
+          if (p.length != 3) return 99999999;
+          return (int.tryParse(p[2]) ?? 9999) * 10000 + (int.tryParse(p[1]) ?? 99) * 100 + (int.tryParse(p[0]) ?? 99);
+        }
+        final sortedDates = byDateAll.keys.toList()..sort((a, b) => dateKey(a).compareTo(dateKey(b)));
+        final now = DateTime.now();
+        final todayStr = '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
+        String? activeDate = _selectedScheduleDate;
+        if (activeDate == null || !byDateAll.containsKey(activeDate)) {
+          activeDate = byDateAll.containsKey(todayStr) ? todayStr : (sortedDates.isNotEmpty ? sortedDates.first : null);
+        }
+        var dayMatches = activeDate == null ? <DocumentSnapshot>[] : List<DocumentSnapshot>.from(byDateAll[activeDate]!);
 
-        // Pakk ut unike runder og baner for filter-boblene
+        // Pakk ut unike runder og baner for filtrene
         final Set<String> rounds = {};
         final Set<String> courts = {};
         for (var m in allMatches) {
            final d = m.data() as Map<String, dynamic>;
            final court = d['court'] as String? ?? '';
            if (court.isNotEmpty) courts.add(court);
-           
+
            final stage = d['stage'] as String? ?? '';
            if (stage == 'group') {
              final g = d['group'] as String? ?? '';
@@ -1747,12 +1787,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         final sortedRounds = rounds.toList()..sort();
         final sortedCourts = courts.toList()..sort((a, b) => a.compareTo(b));
 
-        // Bruk filtrene
-        if (_selectedStatusFilter != 'alle') {
-           allMatches = allMatches.where((m) => (m.data() as Map)['status'] == _selectedStatusFilter).toList();
-        }
+        // Bruk filtrene (runde/bane/søk) – teller status før statusfilter
         if (_selectedRoundFilter != 'alle') {
-           allMatches = allMatches.where((m) {
+           dayMatches = dayMatches.where((m) {
              final d = m.data() as Map<String, dynamic>;
              final stage = d['stage'] as String? ?? '';
              String roundLabel = '';
@@ -1773,10 +1810,29 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
            }).toList();
         }
         if (_selectedCourtFilter != 'alle') {
-           allMatches = allMatches.where((m) => (m.data() as Map)['court'] == _selectedCourtFilter).toList();
+           dayMatches = dayMatches.where((m) => (m.data() as Map)['court'] == _selectedCourtFilter).toList();
+        }
+        final q = _scheduleQuery.trim().toLowerCase();
+        if (q.isNotEmpty) {
+          dayMatches = dayMatches.where((m) {
+            final d = m.data() as Map<String, dynamic>;
+            final num = matchNumById[m.id] ?? (d['match_number'] as int?);
+            final hay = '${d['team_a_name'] ?? ''} ${d['team_b_name'] ?? ''} ${num ?? ''} #${num ?? ''}'.toLowerCase();
+            return hay.contains(q);
+          }).toList();
+        }
+        int countStatus(String s) => dayMatches.where((m) => (m.data() as Map)['status'] == s).length;
+        final statusCounts = {
+          'alle': dayMatches.length,
+          'live': countStatus('live'),
+          'scheduled': countStatus('scheduled'),
+          'finished': countStatus('finished'),
+        };
+        if (_selectedStatusFilter != 'alle') {
+           dayMatches = dayMatches.where((m) => (m.data() as Map)['status'] == _selectedStatusFilter).toList();
         }
 
-        final sorted = List<DocumentSnapshot>.from(allMatches)
+        final sorted = List<DocumentSnapshot>.from(dayMatches)
           ..sort((a, b) {
             final am = (a.data() as Map)['scheduled_minutes'] as int? ?? 9999;
             final bm = (b.data() as Map)['scheduled_minutes'] as int? ?? 9999;
@@ -1786,100 +1842,198 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             return ac.compareTo(bc);
           });
 
-        final matchNumById = <String, int>{};
-        for (final m in allMatches) {
-          final num = (m.data() as Map)['match_number'] as int?;
-          if (num != null) matchNumById[m.id] = num;
-        }
-
-        final Map<String, List<DocumentSnapshot>> byDate = {};
-        for (final m in sorted) {
-          final date = (m.data() as Map)['match_date'] as String? ?? 'Kampdag';
-          byDate.putIfAbsent(date, () => []).add(m);
-        }
-        final sortedDates = byDate.keys.toList()..sort();
-
-        Widget filterChip(String label, String id, String currentVal, Function(String) onSelect) {
-           final isSelected = id == currentVal;
-           return Padding(
-             padding: const EdgeInsets.only(right: 8),
-             child: ChoiceChip(
-               label: Text(label),
-               selected: isSelected,
-               onSelected: (v) { if(v) onSelect(id); },
-               selectedColor: AppColors.coral,
-               labelStyle: TextStyle(
-                 color: isSelected ? Colors.white : AppColors.adminTextSecondary,
-                 fontWeight: FontWeight.bold,
-               ),
-               backgroundColor: AppColors.adminSurface,
-               side: BorderSide(color: isSelected ? AppColors.coral : AppColors.adminSurfaceElevated),
-             ),
-           );
-        }
-
-        return Column(
-          children: [
-            Container(
-               color: AppColors.adminSurface,
-               width: double.infinity,
-               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      child: Row(
-                        children: [
-                          _buildInlineCategoryFilter(),
-                          const SizedBox(width: 8),
-                          filterChip('Alle', 'alle', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
-                          filterChip('Live', 'live', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
-                          filterChip('Kommende', 'scheduled', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
-                          filterChip('Ferdig', 'finished', _selectedStatusFilter, (v) => setState(() => _selectedStatusFilter = v)),
-                        ],
-                      ),
-                    ),
-                    if (sortedRounds.isNotEmpty)
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                        child: Row(
-                          children: [
-                            filterChip('Alle runder', 'alle', _selectedRoundFilter, (v) => setState(() => _selectedRoundFilter = v)),
-                            for (var r in sortedRounds)
-                              filterChip(r, r, _selectedRoundFilter, (v) => setState(() => _selectedRoundFilter = v)),
-                          ],
-                        ),
-                      ),
-                    if (sortedCourts.isNotEmpty)
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                        child: Row(
-                          children: [
-                            filterChip('Alle baner', 'alle', _selectedCourtFilter, (v) => setState(() => _selectedCourtFilter = v)),
-                            for (var c in sortedCourts)
-                              filterChip(c, c, _selectedCourtFilter, (v) => setState(() => _selectedCourtFilter = v)),
-                          ],
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                  ],
-               ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: sortedDates.isEmpty 
-                  ? const Center(child: Text("Ingen kamper matcher filteret", style: TextStyle(color: AppColors.adminTextSecondary)))
-                  : ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                itemCount: sortedDates.length,
-                itemBuilder: (ctx, i) =>
-                    _buildDaySection(sortedDates[i], byDate[sortedDates[i]]!, matchNumById, catIdToName),
+        // ── Dagvelger ──
+        Widget dayCard(String date) {
+          final list = byDateAll[date]!;
+          final fin = list.where((m) => (m.data() as Map)['status'] == 'finished').length;
+          final live = list.where((m) => (m.data() as Map)['status'] == 'live').length;
+          final on = date == activeDate;
+          String title = date;
+          final p = date.split('.');
+          if (p.length == 3) {
+            final dt = DateTime.tryParse('${p[2]}-${p[1].padLeft(2, '0')}-${p[0].padLeft(2, '0')}');
+            if (dt != null) {
+              const wd = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
+              title = '${wd[dt.weekday - 1]} ${p[0]}.${p[1]}';
+            }
+          }
+          if (date == todayStr) title += ' · i dag';
+          final allDone = fin == list.length && list.isNotEmpty;
+          return InkWell(
+            onTap: () => setState(() => _selectedScheduleDate = date),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.adminSurface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: on ? AppColors.adminPrimary : AppColors.adminOutline, width: on ? 2 : 1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: AdminText.ui(size: 14, weight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text('$fin / ${list.length} ferdig${live > 0 ? ' · $live LIVE' : ''}',
+                      style: AdminText.ui(size: 12, color: allDone ? AppColors.green : AppColors.adminTextMuted)),
+                ],
               ),
             ),
-          ],
+          );
+        }
+
+        // ── Tabell, gruppert per tidspunkt ──
+        final Map<String, List<DocumentSnapshot>> byTime = {};
+        for (final m in sorted) {
+          final time = (m.data() as Map)['match_time'] as String? ?? '--:--';
+          byTime.putIfAbsent(time, () => []).add(m);
+        }
+        final sortedTimes = byTime.keys.toList()..sort();
+
+        final toolbar = Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              AdminSearchField(
+                hint: 'Søk lag eller kampnr',
+                maxWidth: 280,
+                onChanged: (v) => setState(() => _scheduleQuery = v),
+              ),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: AdminSegmented<String>(
+                  selected: _selectedStatusFilter,
+                  onChanged: (v) => setState(() => _selectedStatusFilter = v),
+                  items: [
+                    AdminSegmentItem(value: 'alle', label: 'Alle', count: '${statusCounts['alle']}'),
+                    AdminSegmentItem(value: 'live', label: 'LIVE', count: '${statusCounts['live']}'),
+                    AdminSegmentItem(value: 'scheduled', label: 'Kommende', count: '${statusCounts['scheduled']}'),
+                    AdminSegmentItem(value: 'finished', label: 'Ferdig', count: '${statusCounts['finished']}'),
+                  ],
+                ),
+              ),
+              if (sortedRounds.isNotEmpty)
+                AdminSelect<String>(
+                  label: 'Runde',
+                  value: _selectedRoundFilter,
+                  onChanged: (v) => setState(() => _selectedRoundFilter = v),
+                  options: [
+                    const AdminSegmentItem(value: 'alle', label: 'Alle'),
+                    for (final r in sortedRounds) AdminSegmentItem(value: r, label: r),
+                  ],
+                ),
+              if (sortedCourts.isNotEmpty)
+                AdminSelect<String>(
+                  label: 'Bane',
+                  value: _selectedCourtFilter,
+                  onChanged: (v) => setState(() => _selectedCourtFilter = v),
+                  options: [
+                    const AdminSegmentItem(value: 'alle', label: 'Alle'),
+                    for (final c in sortedCourts) AdminSegmentItem(value: c, label: c),
+                  ],
+                ),
+            ],
+          ),
+        );
+
+        Widget table() {
+          const minW = 1000.0;
+          return LayoutBuilder(builder: (context, c) {
+            final w = c.maxWidth < minW ? minW : c.maxWidth;
+            final content = SizedBox(
+              width: w,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    color: AppColors.adminTableHead,
+                    padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+                    child: Row(
+                      children: const [
+                        SizedBox(width: 48, child: AdminTh('#')),
+                        SizedBox(width: 70, child: AdminTh('Bane')),
+                        Expanded(flex: 3, child: AdminTh('Klasse · runde')),
+                        Expanded(flex: 2, child: AdminTh('Lag A', align: TextAlign.right)),
+                        SizedBox(width: 110, child: AdminTh('Resultat', align: TextAlign.center)),
+                        Expanded(flex: 2, child: AdminTh('Lag B')),
+                        SizedBox(width: 100, child: AdminTh('Status')),
+                        SizedBox(width: 110, child: AdminTh('Handlinger', align: TextAlign.right)),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  for (final time in sortedTimes) ...[
+                    _scheduleTimeHeader(time, byTime[time]!),
+                    for (final m in byTime[time]!) _buildScheduleRow(m, matchNumById, catIdToName),
+                  ],
+                ],
+              ),
+            );
+            if (c.maxWidth >= minW) return content;
+            return SingleChildScrollView(scrollDirection: Axis.horizontal, child: content);
+          });
+        }
+
+        return SingleChildScrollView(
+          child: AdminPageBody(
+            top: 24,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildInlineCategoryFilter(countBy: 'matches'),
+                if (sortedDates.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Wrap(spacing: 10, runSpacing: 10, children: [for (final d in sortedDates) dayCard(d)]),
+                ],
+                const SizedBox(height: 16),
+                AdminCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      toolbar,
+                      const Divider(height: 1),
+                      if (allMatches.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(48),
+                          child: Text("Ingen kamper satt opp ennå.",
+                              textAlign: TextAlign.center,
+                              style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+                        )
+                      else if (sorted.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(48),
+                          child: Text("Ingen kamper matcher filteret",
+                              textAlign: TextAlign.center,
+                              style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+                        )
+                      else
+                        table(),
+                      Container(
+                        color: AppColors.adminTableHead,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          spacing: 16,
+                          runSpacing: 4,
+                          children: [
+                            Text('Klikk på en kamp for å endre bane, tid, resultat, bytte lag eller sette walkover',
+                                style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                            Text('QR vises når begge lag er klare',
+                                style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -1887,105 +2041,114 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  Widget _buildDaySection(String date, List<DocumentSnapshot> matches, Map<String, int> matchNumById, Map<String, String> catIdToName) {
-    final Map<String, List<DocumentSnapshot>> byTime = {};
-    for (final m in matches) {
-      final time = (m.data() as Map)['match_time'] as String? ?? '--:--';
-      byTime.putIfAbsent(time, () => []).add(m);
-    }
-    final sortedTimes = byTime.keys.toList()..sort();
-
-    final finished = matches.where((m) => (m.data() as Map)['status'] == 'finished').length;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ExpansionTile(
-        initiallyExpanded: true,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        title: Text(date, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.adminText)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("$finished/${matches.length}",
-                style: TextStyle(
-                    fontSize: 12,
-                    color: finished == matches.length ? AppColors.green : AppColors.adminTextSecondary)),
-            const SizedBox(width: 4),
-            const Icon(Icons.expand_more, color: AppColors.adminTextSecondary),
-          ],
-        ),
+  Widget _scheduleTimeHeader(String time, List<DocumentSnapshot> matches) {
+    final fin = matches.where((m) => (m.data() as Map)['status'] == 'finished').length;
+    final live = matches.where((m) => (m.data() as Map)['status'] == 'live').length;
+    final summary = '${matches.length} ${matches.length == 1 ? 'kamp' : 'kamper'} · $fin ferdig${live > 0 ? ' · $live LIVE' : ''}';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+      decoration: const BoxDecoration(
+        color: AppColors.adminSurface,
+        border: Border(bottom: BorderSide(color: AppColors.adminDivider)),
+      ),
+      child: Row(
         children: [
-          for (final time in sortedTimes) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.adminSurfaceElevated,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(time,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.adminPrimary)),
-                  ),
-                  Expanded(child: Container(height: 1, margin: const EdgeInsets.only(left: 10), color: AppColors.adminSurfaceElevated)),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: byTime[time]!.map((m) => _buildScheduleCard(m, matchNumById, catIdToName)).toList(),
-              ),
-            ),
-          ],
-          const SizedBox(height: 4),
+          Text(time, style: AdminText.mono(size: 15, weight: FontWeight.w600)),
+          const SizedBox(width: 12),
+          Text(summary, style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+          const SizedBox(width: 12),
+          const Expanded(child: Divider(height: 1, color: AppColors.adminOutline)),
         ],
       ),
     );
   }
 
-    Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById, Map<String, String> catIdToName) {
+  Widget _buildScheduleRow(DocumentSnapshot matchDoc, Map<String, int> matchNumById, Map<String, String> catIdToName) {
     final d = matchDoc.data() as Map<String, dynamic>;
     final matchNum = matchNumById[matchDoc.id] ?? (d['match_number'] as int?);
-    final stage = d['stage'] as String? ?? '';
-    final group = d['group'] as String?;
-    final bracket = d['bracket'] as String?;
-    final round = d['round'] as String?;
     final court = d['court'] as String? ?? 'TBD';
     final status = d['status'] as String? ?? 'scheduled';
     final isFinished = status == 'finished';
     final isLive = status == 'live';
     final isPending = status == 'pending';
-    final isWalkover = d['walkover'] as bool? ?? false;
-    
-    final catId = d['category_id'] as String? ?? '';
-    final catName = catIdToName[catId] ?? '';
 
-    String stageLabel = catName.isNotEmpty ? '$catName - ' : '';
-    if (stage == 'group') {
-      final mType = d['match_type'] as String? ?? '';
-      final matchLabel = {'group_match_1':' - K1','group_match_2':' - K2','group_match_3':' - K3','group_match_4':' - K4'}[mType] ?? '';
-      stageLabel += 'Pulje $group$matchLabel';
-    }
-    if (stage == 'playoff') {
-      final bl = bracket?.toUpperCase() ?? '';
-      final rl = const {'r16':'R16','qf':'KF','sf':'SF','final':'Finale'}[round] ?? '';
-      stageLabel += '$bl-Bracket $rl';
-    }
+    final catName = catIdToName[d['category_id'] as String? ?? ''] ?? '';
+    final round = _roundLabel(d);
+    final stageLabel = [catName, round].where((s) => s.isNotEmpty).join(' · ');
 
     final teamA = _resolveTeamDisplayName(d, 'team_a', matchNumById);
     final teamB = _resolveTeamDisplayName(d, 'team_b', matchNumById);
+    final aPlaceholder = (d['team_a_id'] as String? ?? '') == 'placeholder';
+    final bPlaceholder = (d['team_b_id'] as String? ?? '') == 'placeholder';
     final homeScore = d['home_score'] as int? ?? 0;
     final awayScore = d['away_score'] as int? ?? 0;
     final homeWins = isFinished && homeScore > awayScore;
     final awayWins = isFinished && awayScore > homeScore;
 
+    String result = '–';
+    if (isFinished) {
+      result = '$homeScore – $awayScore';
+    } else if (isLive) {
+      result = '${d['home_sets'] ?? 0} – ${d['away_sets'] ?? 0}';
+    }
+
+    TextStyle teamStyle(bool wins, bool placeholder) => AdminText.ui(
+          size: 14,
+          weight: wins ? FontWeight.w700 : FontWeight.w600,
+          color: wins ? AppColors.green : (placeholder ? AppColors.adminTextSecondary : AppColors.adminText),
+          style: placeholder ? FontStyle.italic : null,
+        );
+
+    return AdminHoverRow(
+      onTap: () => _showMatchEditDialog(matchDoc),
+      background: isLive ? const Color(0xFFFEF4F3) : AppColors.adminSurface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+        child: Row(
+          children: [
+            SizedBox(width: 48, child: Text(matchNum != null ? '$matchNum' : '', style: AdminText.mono(size: 12, weight: FontWeight.w600, color: AppColors.adminPrimary))),
+            SizedBox(width: 70, child: Text(_courtShort(court), style: AdminText.mono(size: 13, weight: FontWeight.w600))),
+            Expanded(flex: 3, child: Text(stageLabel.isEmpty ? '-' : stageLabel, style: AdminText.ui(size: 13, color: AppColors.adminTextMuted), overflow: TextOverflow.ellipsis)),
+            Expanded(flex: 2, child: Text(teamA, textAlign: TextAlign.right, style: teamStyle(homeWins, aPlaceholder), overflow: TextOverflow.ellipsis)),
+            SizedBox(width: 110, child: Text(result, textAlign: TextAlign.center, style: AdminText.mono(size: 15, weight: FontWeight.w600))),
+            Expanded(flex: 2, child: Text(teamB, style: teamStyle(awayWins, bPlaceholder), overflow: TextOverflow.ellipsis)),
+            SizedBox(width: 100, child: Align(alignment: Alignment.centerLeft, child: AdminMatchStatusPill(_matchStatusLabel(d)))),
+            SizedBox(
+              width: 110,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  AdminGhostIconButton(
+                    icon: Icons.qr_code_2,
+                    tooltip: isPending ? 'QR når lagene er klare' : 'Vis dommer-QR',
+                    color: isPending ? AppColors.adminOutline : null,
+                    onPressed: isPending ? null : () => _showQrDialog(matchDoc.id, teamA, teamB),
+                  ),
+                  AdminGhostIconButton(
+                    icon: Icons.edit_outlined,
+                    tooltip: 'Rediger kamp',
+                    onPressed: () => _showMatchEditDialog(matchDoc),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── UI shell ─────────────────────────────────────────────────────────────
+
+  /// Visningshjelper: kampstatus-ord (samme regler som før: LIVE, Ferdig,
+  /// Walkover, Venter..., +Nmin, Planlagt).
+  String _matchStatusLabel(Map<String, dynamic> d) {
+    final status = d['status'] as String? ?? 'scheduled';
+    if (status == 'live') return 'LIVE';
+    if (status == 'finished') return (d['walkover'] as bool? ?? false) ? 'Walkover' : 'Ferdig';
+    if (status == 'pending') return 'Venter...';
     final matchTime = d['match_time'] as String? ?? '';
     final matchDate = d['match_date'] as String? ?? '';
-    int? delayMinutes;
     if (status == 'scheduled' && matchTime.isNotEmpty && matchDate.isNotEmpty) {
       final parts = matchDate.split('.');
       final timeParts = matchTime.split(':');
@@ -1993,232 +2156,111 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         try {
           final scheduledDt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]), int.parse(timeParts[0]), int.parse(timeParts[1]));
           final diff = DateTime.now().difference(scheduledDt).inMinutes;
-          if (diff > 0) delayMinutes = diff;
+          if (diff > 0) return '+${diff}min';
         } catch (_) {}
       }
     }
+    return 'Planlagt';
+  }
 
-    Color statusColor = AppColors.adminTextSecondary;
-    String statusLabel = 'Planlagt';
-    if (isLive) { statusColor = AppColors.coral; statusLabel = 'LIVE'; }
-    else if (isFinished) { statusColor = AppColors.green; statusLabel = isWalkover ? 'Walkover' : 'Ferdig'; }
-    else if (isPending) { statusLabel = 'Venter...'; }
-    else if (delayMinutes != null && delayMinutes > 0) { statusColor = AppColors.adminPrimaryHover; statusLabel = '+${delayMinutes}min'; }
+  /// Visningshjelper: «Pulje A – K4» / «A-Bracket KF».
+  String _roundLabel(Map<String, dynamic> d) {
+    final stage = d['stage'] as String? ?? '';
+    if (stage == 'group') {
+      final mType = d['match_type'] as String? ?? '';
+      final matchLabel = {'group_match_1':' – K1','group_match_2':' – K2','group_match_3':' – K3','group_match_4':' – K4'}[mType] ?? '';
+      return 'Pulje ${d['group'] ?? '?'}$matchLabel';
+    }
+    if (stage == 'playoff') {
+      final bl = (d['bracket'] as String?)?.toUpperCase() ?? '';
+      final rl = const {'r16':'R16','r8':'R8','qf':'KF','sf':'SF','final':'Finale','omspill':'Omspill'}[d['round']] ?? '';
+      return '$bl-Bracket $rl'.trim();
+    }
+    return '';
+  }
 
-    Widget teamLine(String name, bool wins, int? score) => Row(children: [
-      Expanded(child: Text(name, style: TextStyle(fontSize: 14, fontWeight: wins ? FontWeight.bold : FontWeight.w600, color: wins ? AppColors.adminText : AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis)),
-      if (score != null) Text('$score', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: wins ? AppColors.green : AppColors.adminTextSecondary)),
-    ]);
+  String _liveScoreLine(Map<String, dynamic> d, bool home) {
+    final past = (d['past_sets'] as List?) ?? const [];
+    final parts = <String>[];
+    for (final s in past) {
+      if (s is Map) parts.add('${s[home ? 'home' : 'away']}');
+    }
+    parts.add('${d[home ? 'home_score' : 'away_score'] ?? 0}');
+    return parts.join(' · ');
+  }
 
-    Widget infoChip(String text, {Color? color, bool filled = true}) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(color: filled ? AppColors.adminSurfaceElevated : Colors.transparent, borderRadius: BorderRadius.circular(4)),
-      child: Text(text, style: TextStyle(fontSize: 11, color: color ?? AppColors.adminTextSecondary, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
-    );
+  String _courtShort(String? court) {
+    final c = (court ?? '').trim();
+    if (c.isEmpty || c == 'TBD') return '–';
+    return c.toLowerCase().startsWith('bane ') ? c.substring(5) : c;
+  }
 
-    final accent = isLive ? AppColors.coral : isFinished ? AppColors.green : AppColors.adminSurfaceElevated;
-    final qrUrl = "https://spikedunk.web.app/?matchId=${matchDoc.id}";
+  Future<void> _openRegistrations() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('tournaments').doc(widget.tournamentId).get();
+    if (!mounted) return;
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => RegistrationsPage(
+        tournamentId: widget.tournamentId,
+        tournamentName: widget.tournamentName,
+        tournamentType:
+            (doc.data()?['tournament_type'] as String?) ?? 'nt_master',
+      ),
+    ));
+  }
 
-    final Widget qrBox = isPending
-        ? SizedBox(width: 108, child: Center(child: Text('QR når lagene\ner klare', textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: AppColors.adminTextSecondary))))
-        : InkWell(
-            onTap: () => _showQrDialog(matchDoc.id, teamA, teamB),
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6), border: Border.all(color: AppColors.adminSurfaceElevated)),
-                    child: QrImageView(data: qrUrl, version: QrVersions.auto, size: 92, padding: EdgeInsets.zero, backgroundColor: Colors.white),
-                  ),
-                  const SizedBox(height: 3),
-                  const Text('Scan for dommer', style: TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
-                ],
-              ),
-            ),
-          );
-
-    return GestureDetector(
-      onTap: () => _showMatchEditDialog(matchDoc),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: AppColors.adminSurfaceElevated.withOpacity(0.4),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: isLive ? AppColors.coral.withOpacity(0.6) : isFinished ? AppColors.green.withOpacity(0.25) : AppColors.adminSurfaceElevated, width: isLive ? 1.5 : 1),
+  Future<void> _openEditTournament() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('tournaments')
+        .doc(widget.tournamentId)
+        .get();
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditTournamentPage(
+          tournamentId: widget.tournamentId,
+          initialData: doc.data() ?? {},
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 170,
-                padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-                decoration: BoxDecoration(border: Border(left: BorderSide(color: accent, width: 4))),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(children: [
-                      if (matchNum != null) ...[Text('#$matchNum', style: const TextStyle(fontSize: 12, color: AppColors.adminPrimary, fontWeight: FontWeight.bold)), const SizedBox(width: 6)],
-                      Flexible(child: infoChip(statusLabel, color: statusColor)),
-                      const SizedBox(width: 4),
-                      const Icon(Icons.edit, size: 12, color: AppColors.adminTextSecondary),
-                    ]),
-                    const SizedBox(height: 6),
-                    Row(children: [
-                      const Icon(Icons.access_time, size: 12, color: AppColors.adminTextSecondary),
-                      const SizedBox(width: 4),
-                      Flexible(child: Text(matchTime.isEmpty ? '--:--' : (matchDate.isEmpty ? matchTime : '$matchTime – $matchDate'), style: const TextStyle(fontSize: 11, color: AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis)),
-                    ]),
-                    const SizedBox(height: 6),
-                    infoChip(stageLabel.isEmpty ? '-' : stageLabel),
-                    const SizedBox(height: 6),
-                    Row(children: [
-                      const Icon(Icons.location_on, size: 12, color: AppColors.adminTextSecondary),
-                      const SizedBox(width: 4),
-                      Flexible(child: Text(court, style: const TextStyle(fontSize: 11, color: AppColors.adminPrimary, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
-                    ]),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Container(
-                  color: AppColors.adminSurface,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              teamLine(teamA, homeWins, isFinished ? homeScore : null),
-                              Container(height: 1, margin: const EdgeInsets.symmetric(vertical: 8), color: AppColors.adminSurfaceElevated),
-                              teamLine(teamB, awayWins, isFinished ? awayScore : null),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Container(
-                        decoration: const BoxDecoration(border: Border(left: BorderSide(color: AppColors.adminSurfaceElevated))),
-                        child: qrBox,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-
       ),
     );
   }
 
-  // ─── UI shell ─────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
+    final isMobile = ResponsiveLayout.getBreakpoint(context).index < ResponsiveBreakpoint.tablet.index;
+    final isDesktop = Responsive.isDesktopOrLarger(context);
+
+    final page = Column(
+      children: [
+        _buildHeader(context, showTabs: !isMobile),
+        Expanded(child: _buildNavContent()),
+      ],
+    );
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text("Admin: ${widget.tournamentName}"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.how_to_reg),
-            tooltip: "Påmeldinger",
-            onPressed: () async {
-              final doc = await FirebaseFirestore.instance
-                  .collection('tournaments').doc(widget.tournamentId).get();
-              if (!context.mounted) return;
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => RegistrationsPage(
-                  tournamentId: widget.tournamentId,
-                  tournamentName: widget.tournamentName,
-                  tournamentType:
-                      (doc.data()?['tournament_type'] as String?) ?? 'nt_master',
-                ),
-              ));
-            },
-          ),
-          PopupMenuButton<String>(
-            tooltip: "Avanserte handlinger",
-            icon: const Icon(Icons.more_vert),
-            onSelected: (v) {
-              if (v == 'sync') _resolvePendingMatches().then((_) => _snack("Synkronisert."));
-              if (v == 'reset') _resetTournament();
-            },
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(
-                value: 'sync',
-                child: ListTile(
-                  leading: Icon(Icons.sync, color: AppColors.adminPrimary),
-                  title: Text("Sync bracket"),
-                  subtitle: Text("Oppdater kryssninger manuelt", style: TextStyle(fontSize: 11)),
-                  dense: true,
-                ),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(
-                value: 'reset',
-                child: ListTile(
-                  leading: Icon(Icons.restart_alt, color: AppColors.adminPrimary),
-                  title: Text("Nullstill hele turneringen"),
-                  subtitle: Text("Sletter alle kamper, beholder lag", style: TextStyle(fontSize: 11)),
-                  dense: true,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Row(
+      backgroundColor: AppColors.adminBg,
+      body: isDesktop
+          ? Row(
               children: [
-                if (ResponsiveLayout.getBreakpoint(context).index >= ResponsiveBreakpoint.tablet.index)
-                  NavigationRail(
-                    backgroundColor: AppColors.adminSurface,
-                    selectedIndex: _selectedNavIndex,
-                    onDestinationSelected: (i) => setState(() => _selectedNavIndex = i),
-                    labelType: NavigationRailLabelType.all,
-                    selectedIconTheme: const IconThemeData(color: AppColors.adminPrimary),
-                    selectedLabelTextStyle: const TextStyle(
-                      color: AppColors.adminPrimary, fontWeight: FontWeight.bold, fontSize: 12),
-                    unselectedIconTheme: const IconThemeData(color: AppColors.adminTextSecondary),
-                    unselectedLabelTextStyle: const TextStyle(
-                      color: AppColors.adminTextSecondary, fontSize: 12),
-                    destinations: const [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.dashboard),
-                        label: Text("Oversikt"),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.schedule),
-                        label: Text("Kampprogram"),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.account_tree),
-                        label: Text("Oppsett"),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.groups),
-                        label: Text("Lag"),
-                      ),
-                    ],
-                  ),
-                if (ResponsiveLayout.getBreakpoint(context).index >= ResponsiveBreakpoint.tablet.index)
-                  const VerticalDivider(width: 1, thickness: 1),
-                Expanded(child: _buildNavContent()),
+                AdminSidebar(
+                  selectedIndex: 0,
+                  showLiveCounts: true,
+                  onDestinationSelected: (index) {
+                    if (index == 3) {
+                      FirebaseAuth.instance.signOut();
+                      Navigator.of(context).popUntil((r) => r.isFirst);
+                    } else {
+                      AdminShell.navRequest.value = index;
+                      Navigator.of(context).popUntil((r) => r.isFirst);
+                    }
+                  },
+                ),
+                Expanded(child: page),
               ],
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: ResponsiveLayout.getBreakpoint(context).index < ResponsiveBreakpoint.tablet.index
+            )
+          : SafeArea(bottom: false, child: page),
+      bottomNavigationBar: isMobile
           ? BottomNavigationBar(
               currentIndex: _selectedNavIndex,
               onTap: (i) => setState(() => _selectedNavIndex = i),
@@ -2233,13 +2275,282 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
               ],
             )
           : null,
-      floatingActionButton: _selectedNavIndex == 3
-          ? FloatingActionButton.extended(
-              onPressed: _showAddTeamDialog,
-              label: const Text("Nytt Lag"),
-              icon: const Icon(Icons.group_add),
-            )
-          : null,
+    );
+  }
+
+  // ─── Turneringshode: brødsmuler, tittel, status, handlinger, faner ──────────
+
+  Widget _buildHeader(BuildContext context, {required bool showTabs}) {
+    final db = FirebaseFirestore.instance;
+    return StreamBuilder<DocumentSnapshot>(
+      stream: db.collection('tournaments').doc(widget.tournamentId).snapshots(),
+      builder: (ctx, tourSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: db.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+          builder: (ctx, catSnap) {
+            return StreamBuilder<QuerySnapshot>(
+              stream: db.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+              builder: (ctx, matchSnap) {
+                return StreamBuilder<QuerySnapshot>(
+                  stream: db.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+                  builder: (ctx, teamSnap) {
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: db.collection('registrations').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+                      builder: (ctx, regSnap) {
+                        final t = tourSnap.data?.data() as Map<String, dynamic>? ?? {};
+                        final cats = catSnap.data?.docs ?? const [];
+                        final matches = matchSnap.data?.docs ?? const [];
+                        final teamCount = teamSnap.data?.docs.length ?? 0;
+                        final pendingRegs = (regSnap.data?.docs ?? const [])
+                            .where((d) => (d.data() as Map)['status'] == 'pending')
+                            .length;
+                        final isPub = cats.isNotEmpty && (cats.first.data() as Map)['published'] == true;
+                        final liveCount = matches.where((m) => (m.data() as Map)['status'] == 'live').length;
+                        final regOpen = (t['registration_status'] as String? ?? 'open') == 'open';
+                        return _buildHeaderContent(
+                          context,
+                          data: t,
+                          isPublished: isPub,
+                          hasMatches: matches.isNotEmpty,
+                          matchCount: matches.length,
+                          teamCount: teamCount,
+                          liveCount: liveCount,
+                          pendingRegs: pendingRegs,
+                          registrationOpen: regOpen,
+                          showTabs: showTabs,
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _headerDateRange(String? s, String? e) {
+    DateTime? p(String? v) {
+      final parts = (v ?? '').split('.');
+      if (parts.length != 3) return null;
+      final d = int.tryParse(parts[0]), m = int.tryParse(parts[1]), y = int.tryParse(parts[2]);
+      if (d == null || m == null || y == null) return null;
+      return DateTime(y, m, d);
+    }
+    String two(int n) => n.toString().padLeft(2, '0');
+    final a = p(s), b = p(e);
+    if (a == null || b == null) return [s, e].whereType<String>().where((x) => x.isNotEmpty).join(' – ');
+    if (a == b) return '${two(a.day)}.${two(a.month)}.${a.year}';
+    if (a.year == b.year && a.month == b.month) return '${two(a.day)}.–${two(b.day)}.${two(b.month)}.${b.year}';
+    return '${two(a.day)}.${two(a.month)}.–${two(b.day)}.${two(b.month)}.${b.year}';
+  }
+
+  Widget _buildHeaderContent(
+    BuildContext context, {
+    required Map<String, dynamic> data,
+    required bool isPublished,
+    required bool hasMatches,
+    required int matchCount,
+    required int teamCount,
+    required int liveCount,
+    required int pendingRegs,
+    required bool registrationOpen,
+    required bool showTabs,
+  }) {
+    final pad = AdminPageBody.padFor(context);
+    final name = (data['name'] as String?) ?? widget.tournamentName;
+    final typeLabel = (data['tournament_type_label'] as String?) ?? '';
+    final location = (data['location'] as String?) ?? '';
+    final courts = (data['courts_count'] as num?)?.toInt();
+    final dates = _headerDateRange(data['start_date'] as String?, data['end_date'] as String?);
+    final isMobile = !showTabs;
+
+    final metaParts = <InlineSpan>[];
+    void addMeta(InlineSpan s) {
+      if (metaParts.isNotEmpty) metaParts.add(const TextSpan(text: ' · '));
+      metaParts.add(s);
+    }
+    if (typeLabel.isNotEmpty) addMeta(TextSpan(text: typeLabel));
+    if (location.isNotEmpty) addMeta(TextSpan(text: location));
+    if (dates.isNotEmpty) addMeta(TextSpan(text: dates, style: AdminText.mono(size: 13, color: AppColors.adminTextSecondary)));
+    if (courts != null) addMeta(TextSpan(text: '$courts baner'));
+
+    final actions = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        AdminButton(
+          label: 'Påmeldinger',
+          icon: Icons.how_to_reg_outlined,
+          badge: pendingRegs > 0 ? AdminPill.count('$pendingRegs') : null,
+          onPressed: _openRegistrations,
+        ),
+        AdminButton(
+          label: 'Rediger turnering',
+          icon: Icons.edit_outlined,
+          onPressed: _openEditTournament,
+        ),
+        if (hasMatches)
+          AdminButton(
+            label: isPublished ? 'Skjul turnering' : 'Publiser turnering',
+            icon: isPublished ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+            onPressed: () { if (isPublished) { _unpublishCategory(); } else { _publishCategory(); } },
+          ),
+        PopupMenuButton<String>(
+          tooltip: "Avanserte handlinger",
+          position: PopupMenuPosition.under,
+          onSelected: (v) {
+            if (v == 'sync') _resolvePendingMatches().then((_) => _snack("Synkronisert."));
+            if (v == 'reset') _resetTournament();
+          },
+          itemBuilder: (ctx) => [
+            PopupMenuItem(
+              value: 'sync',
+              child: ListTile(
+                leading: const Icon(Icons.sync, color: AppColors.adminPrimary),
+                title: Text("Sync bracket", style: AdminText.ui(size: 14, weight: FontWeight.w600)),
+                subtitle: Text("Oppdater kryssninger manuelt", style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            const PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'reset',
+              child: ListTile(
+                leading: const Icon(Icons.restart_alt, color: AppColors.adminDanger),
+                title: Text("Nullstill hele turneringen", style: AdminText.ui(size: 14, weight: FontWeight.w600, color: AppColors.adminDangerText)),
+                subtitle: Text("Sletter alle kamper, beholder lag", style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.adminSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.adminOutline),
+            ),
+            child: const Icon(Icons.more_horiz, size: 20, color: AppColors.adminTextMuted),
+          ),
+        ),
+      ],
+    );
+
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: AppColors.adminSurface,
+        border: Border(bottom: BorderSide(color: AppColors.adminOutline)),
+      ),
+      padding: EdgeInsets.fromLTRB(pad, isMobile ? 12 : 20, pad, showTabs ? 0 : 16),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1240),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Brødsmuler
+              Row(
+                children: [
+                  if (isMobile) ...[
+                    AdminGhostIconButton(
+                      icon: Icons.arrow_back,
+                      size: 36,
+                      tooltip: 'Tilbake',
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  InkWell(
+                    onTap: () => Navigator.of(context).maybePop(),
+                    child: Text('Turneringer', style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text('›', style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                  ),
+                  Flexible(
+                    child: Text(name, style: AdminText.ui(size: 13), overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              LayoutBuilder(builder: (context, hc) => Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!isMobile) ...[
+                        const AdminIconTile(icon: Icons.emoji_events_outlined, size: 56, iconSize: 26, radius: 12),
+                        const SizedBox(width: 16),
+                      ],
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: (hc.maxWidth - (isMobile ? 0 : 72)).clamp(120.0, 640.0),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(name, style: AdminText.ui(size: isMobile ? 22 : 26, weight: FontWeight.w700)),
+                                if (liveCount > 0) const AdminPill.live(dot: true),
+                                if (hasMatches)
+                                  isPublished ? const AdminPill.success('Publisert') : const AdminPill.neutral('Skjult'),
+                                registrationOpen
+                                    ? const AdminPill.success('Påmelding åpen')
+                                    : const AdminPill.neutral('Påmelding stengt'),
+                              ],
+                            ),
+                            if (metaParts.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text.rich(
+                                TextSpan(children: metaParts),
+                                style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  actions,
+                ],
+              )),
+              if (showTabs) ...[
+                const SizedBox(height: 16),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      AdminTab(label: 'Oversikt', selected: _selectedNavIndex == 0, onTap: () => setState(() => _selectedNavIndex = 0)),
+                      AdminTab(label: 'Kampprogram', count: matchCount > 0 ? '$matchCount' : null, selected: _selectedNavIndex == 1, onTap: () => setState(() => _selectedNavIndex = 1)),
+                      AdminTab(label: 'Oppsett', selected: _selectedNavIndex == 2, onTap: () => setState(() => _selectedNavIndex = 2)),
+                      AdminTab(label: 'Lag', count: teamCount > 0 ? '$teamCount' : null, selected: _selectedNavIndex == 3, onTap: () => setState(() => _selectedNavIndex = 3)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -2268,13 +2579,18 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 return StreamBuilder<DocumentSnapshot>(
                   stream: FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).snapshots(),
                   builder: (ctx4, tourSnap) {
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance.collection('registrations').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+                      builder: (ctx5, regSnap) {
                     if (!matchSnap.hasData || !teamSnap.hasData || !catSnap.hasData || !tourSnap.hasData) {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    var matches = matchSnap.data!.docs;
-                    var teams = teamSnap.data!.docs;
-                    
+                    final allMatches = matchSnap.data!.docs;
+                    final allTeams = teamSnap.data!.docs;
+                    var matches = allMatches;
+                    var teams = allTeams;
+
                     if (_selectedCategoryId != null && _selectedCategoryId != 'all') {
                       matches = matches.where((m) => (m.data() as Map)['category_id'] == _selectedCategoryId).toList();
                       teams = teams.where((t) => (t.data() as Map)['category_id'] == _selectedCategoryId).toList();
@@ -2286,6 +2602,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                     final courtsCount = (tourData['courts_count'] as num?)?.toInt() ?? 4;
                     final totalMatches = matches.length;
                     final totalTeams = teams.length;
+                    final finishedCount = matches.where((m) => (m.data() as Map)['status'] == 'finished').length;
 
                     Map<String, int> matchesPerGender = {'Herrer': 0, 'Damer': 0, 'Annet': 0};
                     Map<String, int> matchesPerLevel = {};
@@ -2301,7 +2618,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       final d = m.data() as Map<String, dynamic>;
                       final catId = d['category_id'] as String? ?? '';
                       final catName = catIdToName[catId] ?? '';
-                      
+
                       if (catName.toLowerCase().contains('menn') || catName.toLowerCase().contains('herrer')) {
                         matchesPerGender['Herrer'] = (matchesPerGender['Herrer'] ?? 0) + 1;
                       } else if (catName.toLowerCase().contains('damer')) {
@@ -2318,89 +2635,321 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       matchesPerLevel[level] = (matchesPerLevel[level] ?? 0) + 1;
                     }
 
-                    Widget statCard(String title, String value, IconData icon, Color color) {
-                      return Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(icon, color: color, size: 20),
-                                  const SizedBox(width: 8),
-                                  Text(title, style: const TextStyle(fontSize: 14, color: AppColors.adminTextSecondary)),
-                                ],
-                              ),
-                              const Spacer(),
-                              Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                            ],
-                          ),
+                    // ── Avledede visningstall ──
+                    final liveMatches = matches.where((m) => (m.data() as Map)['status'] == 'live').toList()
+                      ..sort((a, b) => '${(a.data() as Map)['court'] ?? ''}'.compareTo('${(b.data() as Map)['court'] ?? ''}'));
+                    final courtsInUse = liveMatches
+                        .map((m) => (m.data() as Map)['court'] as String?)
+                        .whereType<String>()
+                        .toSet()
+                        .length;
+                    final groupCount = matches.where((m) => (m.data() as Map)['stage'] == 'group').length;
+                    final playoffCount = matches.where((m) => (m.data() as Map)['stage'] == 'playoff').length;
+                    final classCount = (_selectedCategoryId != null && _selectedCategoryId != 'all') ? 1 : categories.length;
+
+                    // Neste kamper: tidligste tidspunkt blant kamper som ikke er startet
+                    final upcoming = matches.where((m) {
+                      final s = (m.data() as Map)['status'];
+                      return s == 'scheduled' || s == 'pending';
+                    }).toList();
+                    int sortKey(DocumentSnapshot m) {
+                      final d = m.data() as Map;
+                      final date = (d['match_date'] as String? ?? '').split('.');
+                      final time = (d['match_time'] as String? ?? '').split(':');
+                      if (date.length != 3 || time.length != 2) return 999999999999;
+                      return ((int.tryParse(date[2]) ?? 9999) * 10000 + (int.tryParse(date[1]) ?? 99) * 100 + (int.tryParse(date[0]) ?? 99)) * 10000 +
+                          (int.tryParse(time[0]) ?? 99) * 100 + (int.tryParse(time[1]) ?? 99);
+                    }
+                    upcoming.sort((a, b) => sortKey(a).compareTo(sortKey(b)));
+                    String? nextTime;
+                    String? nextDate;
+                    List<DocumentSnapshot> nextMatches = [];
+                    if (upcoming.isNotEmpty) {
+                      final first = upcoming.first.data() as Map;
+                      nextTime = first['match_time'] as String?;
+                      nextDate = first['match_date'] as String?;
+                      nextMatches = upcoming.where((m) {
+                        final d = m.data() as Map;
+                        return d['match_time'] == nextTime && d['match_date'] == nextDate;
+                      }).toList()
+                        ..sort((a, b) => '${(a.data() as Map)['court'] ?? ''}'.compareTo('${(b.data() as Map)['court'] ?? ''}'));
+                    }
+
+                    // Trenger oppmerksomhet
+                    final pendingRegs = (regSnap.data?.docs ?? const [])
+                        .where((d) => (d.data() as Map)['status'] == 'pending')
+                        .length;
+                    final delayed = <String, String>{}; // bane -> +Nmin
+                    for (final m in matches) {
+                      final d = m.data() as Map<String, dynamic>;
+                      final label = _matchStatusLabel(d);
+                      if (label.startsWith('+')) {
+                        final court = d['court'] as String? ?? '';
+                        delayed.putIfAbsent(court.isEmpty ? 'Ukjent bane' : court, () => label);
+                      }
+                    }
+                    final notGenerated = categories.where((c) {
+                      if (_selectedCategoryId != null && _selectedCategoryId != 'all' && c.id != _selectedCategoryId) return false;
+                      final hasTeams = allTeams.any((t) => (t.data() as Map)['category_id'] == c.id);
+                      final hasM = allMatches.any((m) => (m.data() as Map)['category_id'] == c.id);
+                      return hasTeams && !hasM;
+                    }).toList();
+
+                    final attention = <Widget>[
+                      for (final e in delayed.entries.take(3))
+                        _attentionRow(AdminPill.delayed(e.value), '${e.key} ligger etter skjema', onTap: () => setState(() => _selectedNavIndex = 1)),
+                      if (pendingRegs > 0)
+                        _attentionRow(AdminPill.info('$pendingRegs'),
+                            pendingRegs == 1 ? 'Påmelding venter godkjenning' : 'Påmeldinger venter godkjenning',
+                            onTap: _openRegistrations),
+                      for (final c in notGenerated.take(3))
+                        _attentionRow(const AdminPill.neutral('Venter...'),
+                            'Oppsett ikke generert for ${(c.data() as Map)['name'] ?? 'klasse'}',
+                            onTap: () => setState(() { _selectedCategoryId = c.id; _selectedNavIndex = 2; })),
+                    ];
+
+                    // Fremdrift per klasse
+                    final classRows = <Widget>[];
+                    for (final c in categories) {
+                      if (_selectedCategoryId != null && _selectedCategoryId != 'all' && c.id != _selectedCategoryId) continue;
+                      final cm = allMatches.where((m) => (m.data() as Map)['category_id'] == c.id).toList();
+                      final ct = allTeams.where((t) => (t.data() as Map)['category_id'] == c.id).length;
+                      final done = cm.where((m) => (m.data() as Map)['status'] == 'finished').length;
+                      String phase;
+                      if (cm.isEmpty) {
+                        phase = 'Oppsett ikke generert';
+                      } else if (done == cm.length) {
+                        phase = 'Ferdig';
+                      } else if (cm.any((m) {
+                        final d = m.data() as Map;
+                        return d['stage'] == 'playoff' && (d['status'] == 'live' || d['status'] == 'finished');
+                      })) {
+                        phase = 'Sluttspill pågår';
+                      } else {
+                        phase = 'Gruppespill';
+                      }
+                      classRows.add(Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.adminDivider))),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(children: [
+                              Expanded(child: Text('${(c.data() as Map)['name'] ?? 'Klasse'}', style: AdminText.ui(size: 14, weight: FontWeight.w600))),
+                              Text('$done / ${cm.length}', style: AdminText.mono(size: 12, color: AppColors.adminTextMuted)),
+                            ]),
+                            const SizedBox(height: 8),
+                            AdminProgressBar(value: cm.isEmpty ? 0 : done / cm.length, color: AppColors.green, height: 6),
+                            const SizedBox(height: 6),
+                            Text('$ct lag · $phase', style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+                          ],
+                        ),
+                      ));
+                    }
+
+                    Widget statCard(String title, Widget value, Widget? sub) {
+                      return AdminCard(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(title, style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                            const SizedBox(height: 6),
+                            value,
+                            if (sub != null) sub,
+                          ],
                         ),
                       );
                     }
+                    final bigNum = AdminText.ui(size: 30, weight: FontWeight.w700);
+                    final subStyle = AdminText.ui(size: 12, color: AppColors.adminTextSecondary);
 
-                    return ResponsiveContainer.dashboard(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
+                    final stats = [
+                      statCard("Påmeldte lag", Text("$totalTeams", style: bigNum),
+                          Text(classCount == 1 ? '1 klasse' : '$classCount klasser', style: subStyle)),
+                      statCard("Antall baner", Text("$courtsCount", style: bigNum),
+                          Text('$courtsInUse i bruk nå', style: subStyle)),
+                      statCard("Kamper totalt", Text("$totalMatches", style: bigNum),
+                          Text('$groupCount gruppespill · $playoffCount sluttspill', style: subStyle, overflow: TextOverflow.ellipsis)),
+                      statCard(
+                        "Ferdigspilte",
+                        Text.rich(TextSpan(children: [
+                          TextSpan(text: '$finishedCount', style: bigNum),
+                          TextSpan(text: ' / $totalMatches', style: AdminText.ui(size: 15, weight: FontWeight.w500, color: AppColors.adminTextSecondary)),
+                        ])),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: AdminProgressBar(value: totalMatches == 0 ? 0 : finishedCount / totalMatches, color: AppColors.green, height: 6),
+                        ),
+                      ),
+                    ];
+
+                    Widget barGroup(String title, Map<String, int> values, Color color) {
+                      final entries = values.entries.where((e) => e.value > 0).toList();
+                      final total = entries.fold<int>(0, (a, e) => a + e.value);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(title, style: AdminText.ui(size: 14, weight: FontWeight.w700)),
+                          const SizedBox(height: 10),
+                          if (entries.isEmpty)
+                            Text('Ingen kamper', style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                          for (final e in entries) ...[
+                            Row(children: [
+                              Expanded(child: Text(e.key, style: AdminText.ui(size: 13))),
+                              Text('${e.value}', style: AdminText.mono(size: 13)),
+                            ]),
+                            const SizedBox(height: 6),
+                            AdminProgressBar(value: total == 0 ? 0 : e.value / total, color: color, height: 6),
+                            const SizedBox(height: 10),
+                          ],
+                        ],
+                      );
+                    }
+
+                    final liveCard = AdminCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          AdminCardHeader(
+                            title: 'LIVE nå',
+                            count: Text('${liveMatches.length}', style: AdminText.mono(size: 13, color: AppColors.adminTextSecondary)),
+                            trailing: InkWell(
+                              onTap: () => setState(() => _selectedNavIndex = 1),
+                              child: Text('Se kampprogram', style: AdminText.ui(size: 14, weight: FontWeight.w600, color: AppColors.adminPrimary)),
+                            ),
+                          ),
+                          if (liveMatches.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text('Ingen kamper pågår akkurat nå.', style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+                            ),
+                          for (final m in liveMatches) _overviewLiveRow(m, catIdToName),
+                        ],
+                      ),
+                    );
+
+                    final nextCard = AdminCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          AdminCardHeader(
+                            title: nextTime == null ? 'Neste kamper' : 'Neste kamper · $nextTime',
+                            trailing: Text(nextMatches.length == 1 ? '1 kamp' : '${nextMatches.length} kamper',
+                                style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                          ),
+                          if (nextMatches.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text('Ingen kommende kamper.', style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+                            ),
+                          for (final m in nextMatches) _overviewNextRow(m, catIdToName),
+                        ],
+                      ),
+                    );
+
+                    final attentionCard = AdminCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const AdminCardHeader(title: 'Trenger oppmerksomhet'),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                            child: attention.isEmpty
+                                ? Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Row(children: [
+                                      const Icon(Icons.check_circle_outline, size: 18, color: AppColors.green),
+                                      const SizedBox(width: 8),
+                                      Text('Alt ser bra ut', style: AdminText.ui(size: 14)),
+                                    ]),
+                                  )
+                                : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: attention),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    final progressCard = AdminCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const AdminCardHeader(title: 'Fremdrift per klasse'),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                            child: classRows.isEmpty
+                                ? Text('Ingen klasser funnet.', style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary))
+                                : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: classRows),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    final splitCard = AdminCard(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                      child: LayoutBuilder(builder: (context, c) {
+                        final gender = barGroup('Kamper per kjønn', matchesPerGender, AppColors.adminPrimary);
+                        final level = barGroup('Kamper per nivå', matchesPerLevel, AppColors.adminSidebarBg);
+                        if (c.maxWidth < 300) {
+                          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [gender, const SizedBox(height: 8), level]);
+                        }
+                        return Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [Expanded(child: gender), const SizedBox(width: 20), Expanded(child: level)],
+                        );
+                      }),
+                    );
+
+                    return SingleChildScrollView(
+                      child: AdminPageBody(
+                        top: 24,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text("Turnerings-Oversikt", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                                _buildInlineCategoryFilter(),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            GridView.count(
-                              crossAxisCount: ResponsiveLayout.gridColumns(context, mobile: 2, tablet: 4, desktop: 4, ultrawide: 4),
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              childAspectRatio: 1.5,
-                              children: [
-                                statCard("Påmeldte lag", "$totalTeams", Icons.groups, Colors.blue),
-                                statCard("Antall baner", "$courtsCount", Icons.sports_tennis, Colors.green),
-                                statCard("Kamper totalt", "$totalMatches", Icons.sports_volleyball, Colors.orange),
-                                statCard("Ferdigspilte", "${matches.where((m) => (m.data() as Map)['status'] == 'finished').length}", Icons.check_circle, Colors.teal),
-                              ],
-                            ),
-                            const SizedBox(height: 24),
-                            const Text("Kamper per Klasse (Kjønn)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: matchesPerGender.entries.where((e) => e.value > 0).map((e) {
-                                return Chip(
-                                  label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                  backgroundColor: AppColors.coral,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            _buildInlineCategoryFilter(countBy: 'teams'),
+                            const SizedBox(height: 20),
+                            LayoutBuilder(builder: (context, c) {
+                              const gap = 16.0;
+                              final cols = c.maxWidth >= 860 ? 4 : 2;
+                              final w = (c.maxWidth - gap * (cols - 1)) / cols - 0.1;
+                              return Wrap(
+                                spacing: gap,
+                                runSpacing: gap,
+                                children: [for (final s in stats) SizedBox(width: w, child: s)],
+                              );
+                            }),
+                            const SizedBox(height: 20),
+                            LayoutBuilder(builder: (context, c) {
+                              final left = Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [liveCard, const SizedBox(height: 20), nextCard],
+                              );
+                              final right = Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [attentionCard, const SizedBox(height: 20), progressCard, const SizedBox(height: 20), splitCard],
+                              );
+                              if (c.maxWidth < 900) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [left, const SizedBox(height: 20), right],
                                 );
-                              }).toList(),
-                            ),
-                            const SizedBox(height: 24),
-                            const Text("Kamper per Nivå", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.adminText)),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: matchesPerLevel.entries.where((e) => e.value > 0).map((e) {
-                                return Chip(
-                                  label: Text("${e.key}: ${e.value} kamper", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                  backgroundColor: AppColors.adminSurfaceElevated,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                );
-                              }).toList(),
-                            ),
+                              }
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(flex: 7, child: left),
+                                  const SizedBox(width: 20),
+                                  Expanded(flex: 5, child: right),
+                                ],
+                              );
+                            }),
                           ],
                         ),
                       ),
+                    );
+                      },
                     );
                   },
                 );
@@ -2409,6 +2958,125 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           },
         );
       },
+    );
+  }
+
+  Widget _attentionRow(Widget pill, String text, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Row(
+          children: [
+            pill,
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: AdminText.ui(size: 14))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _overviewLiveRow(DocumentSnapshot m, Map<String, String> catIdToName) {
+    final d = m.data() as Map<String, dynamic>;
+    final num = d['match_number'] as int?;
+    final cat = catIdToName[d['category_id'] as String? ?? ''] ?? '';
+    final round = _roundLabel(d);
+    final label = [cat, round].where((s) => s.isNotEmpty).join(' · ');
+    final teamStyle = AdminText.ui(size: 14, weight: FontWeight.w600);
+    return InkWell(
+      onTap: () => _showMatchEditDialog(m),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.adminDivider))),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 74,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('BANE ${_courtShort(d['court'] as String?)}', style: AdminText.mono(size: 12, weight: FontWeight.w600, color: AppColors.adminPrimary)),
+                  if (num != null) Text('#$num', style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (label.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(label, style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis),
+                    ),
+                  Row(children: [
+                    Expanded(child: Text('${d['team_a_name'] ?? 'TBD'}', style: teamStyle, overflow: TextOverflow.ellipsis)),
+                    Text(_liveScoreLine(d, true), style: AdminText.mono(size: 14, weight: FontWeight.w600)),
+                  ]),
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Expanded(child: Text('${d['team_b_name'] ?? 'TBD'}', style: teamStyle, overflow: TextOverflow.ellipsis)),
+                    Text(_liveScoreLine(d, false), style: AdminText.mono(size: 14, weight: FontWeight.w600)),
+                  ]),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            const AdminPill.live(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _overviewNextRow(DocumentSnapshot m, Map<String, String> catIdToName) {
+    final d = m.data() as Map<String, dynamic>;
+    final cat = catIdToName[d['category_id'] as String? ?? ''] ?? '';
+    final round = _roundLabel(d);
+    final label = [cat, round].where((s) => s.isNotEmpty).join(' · ');
+    final numById = <String, int>{};
+    final a = _resolveTeamDisplayName(d, 'team_a', numById);
+    final b = _resolveTeamDisplayName(d, 'team_b', numById);
+    final isPending = (d['status'] as String? ?? '') == 'pending';
+    final teamStyle = AdminText.ui(size: 14, style: isPending ? FontStyle.italic : null,
+        color: isPending ? AppColors.adminTextSecondary : AppColors.adminText);
+    return InkWell(
+      onTap: () => _showMatchEditDialog(m),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.adminDivider))),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 74,
+              child: Text('BANE ${_courtShort(d['court'] as String?)}', style: AdminText.mono(size: 12, weight: FontWeight.w600, color: AppColors.adminPrimary)),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(text: a, style: teamStyle),
+                  TextSpan(text: '  vs  ', style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+                  TextSpan(text: b, style: teamStyle),
+                ]),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (label.isNotEmpty && Responsive.isTabletOrLarger(context)) ...[
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 170,
+                child: Text(label, style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis),
+              ),
+            ],
+            const SizedBox(width: 12),
+            AdminMatchStatusPill(_matchStatusLabel(d)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2664,7 +3332,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  Widget _buildInlineCategoryFilter() {
+  /// Klasse-filter som avrundede knapper (Alle klasser + hver klasse med antall).
+  /// [countBy] = 'teams' | 'matches' – hva tallet ved hver klasse viser.
+  Widget _buildInlineCategoryFilter({String countBy = 'teams'}) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('categories')
@@ -2681,34 +3351,35 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           });
         }
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.adminSurfaceElevated),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: _selectedCategoryId,
-              icon: const Icon(Icons.keyboard_arrow_down, size: 20),
-              isDense: true,
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection(countBy == 'matches' ? 'matches' : 'teams')
+              .where('tournament_id', isEqualTo: widget.tournamentId)
+              .snapshots(),
+          builder: (ctx, countSnap) {
+            final counts = <String, int>{};
+            for (final d in countSnap.data?.docs ?? const <QueryDocumentSnapshot>[]) {
+              final cid = (d.data() as Map)['category_id'] as String? ?? '';
+              counts[cid] = (counts[cid] ?? 0) + 1;
+            }
+            final total = countSnap.data?.docs.length;
+            return AdminScopeChips<String>(
+              label: 'Klasse',
+              selected: _selectedCategoryId ?? 'all',
+              onChanged: (v) => setState(() => _selectedCategoryId = v),
               items: [
-                const DropdownMenuItem<String>(
-                  value: 'all',
-                  child: Text('Begge kjønn / Alle', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                ),
+                AdminSegmentItem(value: 'all', label: 'Alle klasser', count: total == null ? null : '$total'),
                 ...cats.map((c) {
                   final data = c.data() as Map<String, dynamic>;
-                  return DropdownMenuItem<String>(
+                  return AdminSegmentItem(
                     value: c.id,
-                    child: Text(data['name'] ?? 'Klasse', style: const TextStyle(fontSize: 14)),
+                    label: data['name'] ?? 'Klasse',
+                    count: countSnap.hasData ? '${counts[c.id] ?? 0}' : null,
                   );
                 }),
               ],
-              onChanged: (v) => setState(() => _selectedCategoryId = v),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -2719,7 +3390,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   Widget _buildTeamsTab() {
     Widget content;
     if (_selectedCategoryId == null) {
-      content = const Center(child: Text("Velg en klasse i menyen over."));
+      content = const Padding(
+        padding: EdgeInsets.all(32),
+        child: Center(child: Text("Velg en klasse i menyen over.")),
+      );
     } else if (_selectedCategoryId == 'all') {
       content = StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
@@ -2727,124 +3401,303 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snap.data!.docs;
           if (docs.isEmpty) return const Center(child: Text("Ingen klasser funnet."));
-          return ListView(
-            children: docs.map((doc) => SizedBox(height: 600, child: _buildTeamsTabForCategory(doc.id, (doc.data() as Map)['name']))).toList(),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final doc in docs) ...[
+                _buildTeamsTabForCategory(doc.id, (doc.data() as Map)['name']),
+                const SizedBox(height: 16),
+              ],
+            ],
           );
         }
       );
     } else {
       content = _buildTeamsTabForCategory(_selectedCategoryId!, null);
     }
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
-          child: _buildInlineCategoryFilter(),
+
+    return SingleChildScrollView(
+      child: AdminPageBody(
+        top: 24,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildInlineCategoryFilter(countBy: 'teams'),
+            const SizedBox(height: 16),
+            content,
+          ],
         ),
-        Expanded(child: content),
-      ],
+      ),
     );
   }
-  Widget _buildTeamsTabForCategory(String categoryId, String? categoryName) {
-    return Column(
-      children: [
-            if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const Spacer(),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.auto_awesome),
-                label: const Text("Auto-generer 16 testlag (fra spillerdatabase)"),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.adminPrimaryHover, foregroundColor: Colors.white),
-                onPressed: _autoGenerateTeams,
-              ),
-            ],
-          ),
+
+  Widget _teamToolsMenu() {
+    return PopupMenuButton<String>(
+      tooltip: 'Testverktøy',
+      position: PopupMenuPosition.under,
+      onSelected: (v) {
+        if (v == 'auto') _autoGenerateTeams();
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'auto',
+          child: Row(children: [
+            const Icon(Icons.auto_awesome, size: 18, color: AppColors.adminPrimaryHover),
+            const SizedBox(width: 10),
+            Text("Auto-generer 16 testlag (fra spillerdatabase)", style: AdminText.ui(size: 14)),
+          ]),
         ),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
+      ],
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: AppColors.adminSurface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.adminOutline),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.auto_awesome, size: 18, color: AppColors.adminText),
+          const SizedBox(width: 8),
+          Text('Testverktøy', style: AdminText.ui(size: 14, weight: FontWeight.w600)),
+          const SizedBox(width: 6),
+          const Icon(Icons.keyboard_arrow_down, size: 18, color: AppColors.adminTextSecondary),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildTeamsTabForCategory(String categoryId, String? categoryName) {
+    return AdminCard(
+      child: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).where('category_id', isEqualTo: categoryId).snapshots(),
+        builder: (ctx, snap) {
+          final teams = snap.data?.docs ?? const <QueryDocumentSnapshot>[];
+          final groups = teams
+              .map((t) => (t.data() as Map)['group'] as String?)
+              .whereType<String>()
+              .toSet()
+              .toList()
+            ..sort();
 
-            builder: (ctx, snap) {
-              if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-              final teams = snap.data!.docs;
-              if (teams.isEmpty) {
-                return const Center(
-                  child: Text("Ingen lag registrert enda.\nTrykk + for å legge til lag.",
-                      textAlign: TextAlign.center));
+          // Visningsfiltre
+          final q = _teamQuery.trim().toLowerCase();
+          var shown = teams.where((t) {
+            final d = t.data() as Map;
+            if (_teamGroupFilter != 'alle' && d['group'] != _teamGroupFilter) return false;
+            if (q.isEmpty) return true;
+            final hay = '${d['team_name'] ?? ''} ${d['player1_name'] ?? ''} ${d['player2_name'] ?? ''}'.toLowerCase();
+            return hay.contains(q);
+          }).toList();
+
+          shown = List<QueryDocumentSnapshot>.from(shown)
+            ..sort((a, b) {
+              final da = a.data() as Map, dbb = b.data() as Map;
+              if (_teamSort == 'name') {
+                return '${da['team_name'] ?? ''}'.toLowerCase().compareTo('${dbb['team_name'] ?? ''}'.toLowerCase());
               }
+              final ap  = da['team_points'] as num? ?? 0;
+              final bp  = dbb['team_points'] as num? ?? 0;
+              if (_teamSort == 'points') return bp.compareTo(ap);
+              final as_ = da['seed'] as int? ?? 999;
+              final bs  = dbb['seed'] as int? ?? 999;
+              if (as_ != 999 || bs != 999) return as_.compareTo(bs);
+              return bp.compareTo(ap);
+            });
 
-              final sorted = List<DocumentSnapshot>.from(teams)
-                ..sort((a, b) {
-                  final as_ = (a.data() as Map)['seed'] as int? ?? 999;
-                  final bs  = (b.data() as Map)['seed'] as int? ?? 999;
-                  final ap  = (a.data() as Map)['team_points'] as num? ?? 0;
-                  final bp  = (b.data() as Map)['team_points'] as num? ?? 0;
-                  if (as_ != 999 || bs != 999) return as_.compareTo(bs);
-                  return bp.compareTo(ap);
-                });
-
-              return ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: sorted.length,
-                itemBuilder: (ctx, i) {
-                  final d = sorted[i].data() as Map<String, dynamic>;
-                  final seed = d['seed'] as int?;
-                  final group = d['group'] as String?;
-                  final placement = d['group_placement'] as int?;
-                  return Card(
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: seed != null ? AppColors.adminSurfaceElevated : AppColors.adminTextSecondary,
-                        child: Text(seed?.toString() ?? '-',
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
+          final toolbar = Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      AdminSearchField(
+                        hint: 'Søk lag eller spiller',
+                        maxWidth: 300,
+                        onChanged: (v) => setState(() => _teamQuery = v),
                       ),
-                      title: Text(d['team_name'] ?? 'Ukjent Lag',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text("${d['player1_name'] ?? ''} & ${d['player2_name'] ?? ''}"),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (group != null)
-                            Chip(
-                              label: Text("Pulje $group${placement != null ? ' • $placement.' : ''}"),
-                              backgroundColor: AppColors.adminSurfaceElevated,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: AppColors.adminPrimary),
-                            tooltip: "Rediger / Flytt",
-                            onPressed: () => _showTeamEditDialog(sorted[i]),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: AppColors.adminPrimary),
-                            onPressed: () => _confirmDeleteTeam(
-                                sorted[i].id, d['team_name'] ?? 'laget'),
-                          ),
+                      if (groups.isNotEmpty)
+                        AdminSelect<String>(
+                          label: 'Pulje',
+                          value: groups.contains(_teamGroupFilter) ? _teamGroupFilter : 'alle',
+                          onChanged: (v) => setState(() => _teamGroupFilter = v),
+                          options: [
+                            const AdminSegmentItem(value: 'alle', label: 'Alle'),
+                            for (final g in groups) AdminSegmentItem(value: g, label: 'Pulje $g'),
+                          ],
+                        ),
+                      AdminSelect<String>(
+                        label: 'Sorter',
+                        value: _teamSort,
+                        onChanged: (v) => setState(() => _teamSort = v),
+                        options: const [
+                          AdminSegmentItem(value: 'seed', label: 'Seed'),
+                          AdminSegmentItem(value: 'points', label: 'Poeng'),
+                          AdminSegmentItem(value: 'name', label: 'Navn'),
                         ],
                       ),
+                      _teamToolsMenu(),
+                      AdminButton.primary(
+                        label: 'Nytt lag',
+                        icon: Icons.group_add_outlined,
+                        onPressed: _showAddTeamDialog,
+                      ),
+                    ],
+                  ),
+          );
+
+          Widget body;
+          if (!snap.hasData) {
+            body = const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()));
+          } else if (teams.isEmpty) {
+            body = Padding(
+              padding: const EdgeInsets.all(40),
+              child: Text("Ingen lag registrert enda.\nTrykk «Nytt lag» for å legge til lag.",
+                  textAlign: TextAlign.center,
+                  style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+            );
+          } else if (shown.isEmpty) {
+            body = Padding(
+              padding: const EdgeInsets.all(40),
+              child: Text("Ingen lag matcher filteret.",
+                  textAlign: TextAlign.center,
+                  style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+            );
+          } else {
+            body = LayoutBuilder(builder: (context, c) {
+              const minW = 820.0;
+              final w = c.maxWidth < minW ? minW : c.maxWidth;
+              final table = SizedBox(
+                width: w,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      color: AppColors.adminTableHead,
+                      padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+                      child: Row(children: const [
+                        SizedBox(width: 60, child: AdminTh('Seed')),
+                        Expanded(flex: 2, child: AdminTh('Lag')),
+                        Expanded(flex: 3, child: AdminTh('Spillere')),
+                        SizedBox(width: 80, child: AdminTh('Poeng', align: TextAlign.right)),
+                        SizedBox(width: 24),
+                        SizedBox(width: 130, child: AdminTh('Pulje')),
+                        SizedBox(width: 100, child: AdminTh('Handlinger', align: TextAlign.right)),
+                      ]),
                     ),
-                  );
-                },
+                    const Divider(height: 1),
+                    for (final t in shown) _teamRow(t),
+                  ],
+                ),
               );
-            },
-          ),
-        ),
-      ],
+              if (c.maxWidth >= minW) return table;
+              return SingleChildScrollView(scrollDirection: Axis.horizontal, child: table);
+            });
+          }
+
+          final footerText = '${teams.length} lag${categoryName != null ? ' i $categoryName' : ''}'
+              '${groups.isNotEmpty ? ' · ${groups.length} ${groups.length == 1 ? 'pulje' : 'puljer'}' : ''}';
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (categoryName != null) AdminCardHeader(title: categoryName),
+              toolbar,
+              const Divider(height: 1),
+              body,
+              Container(
+                color: AppColors.adminTableHead,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                child: Text(footerText, style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
-  // ─── NY Oppsett-seksjon (kortbasert, ingen sub-tabs) ──────────────────────
+  Widget _teamRow(DocumentSnapshot teamDoc) {
+    final d = teamDoc.data() as Map<String, dynamic>;
+    final seed = d['seed'] as int?;
+    final group = d['group'] as String?;
+    final placement = d['group_placement'] as int?;
+    final points = (d['team_points'] as num?)?.toInt();
+    final players = [d['player1_name'], d['player2_name']]
+        .whereType<String>()
+        .where((s) => s.trim().isNotEmpty)
+        .join(' · ');
+    return AdminHoverRow(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 16, 10),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: seed != null ? AppColors.adminMuted : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: seed != null ? null : Border.all(color: AppColors.adminOutline),
+                  ),
+                  child: Text(seed?.toString() ?? '-', style: AdminText.mono(size: 13, weight: FontWeight.w600)),
+                ),
+              ),
+            ),
+            Expanded(flex: 2, child: Text(d['team_name'] ?? 'Ukjent Lag', style: AdminText.ui(size: 14, weight: FontWeight.w700), overflow: TextOverflow.ellipsis)),
+            Expanded(flex: 3, child: Text(players, style: AdminText.ui(size: 13, color: AppColors.adminTextMuted), overflow: TextOverflow.ellipsis)),
+            SizedBox(width: 80, child: Text(points?.toString() ?? '–', textAlign: TextAlign.right, style: AdminText.mono(size: 13))),
+            const SizedBox(width: 24),
+            SizedBox(
+              width: 130,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: group != null
+                    ? AdminPill(
+                        label: "Pulje $group${placement != null ? ' · $placement.' : ''}",
+                        background: AppColors.adminSurfaceElevated,
+                        foreground: AppColors.adminTextBody,
+                      )
+                    : Text('–', style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+              ),
+            ),
+            SizedBox(
+              width: 100,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  AdminGhostIconButton(
+                    icon: Icons.edit_outlined,
+                    tooltip: "Rediger / Flytt",
+                    onPressed: () => _showTeamEditDialog(teamDoc),
+                  ),
+                  AdminGhostIconButton(
+                    icon: Icons.delete_outline,
+                    color: AppColors.adminDanger,
+                    tooltip: "Slett lag",
+                    onPressed: () => _confirmDeleteTeam(teamDoc.id, d['team_name'] ?? 'laget'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Oppsett-seksjon (klasseliste + steg + kort) ───────────────────────────
 
   Widget _buildOppsettSection() {
     Widget content;
     if (_selectedCategoryId == null) {
-      content = const Center(child: Text("Velg en klasse."));
+      content = const Padding(padding: EdgeInsets.all(32), child: Center(child: Text("Velg en klasse.")));
     } else if (_selectedCategoryId == 'all') {
       content = StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
@@ -2852,33 +3705,173 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snap.data!.docs;
           if (docs.isEmpty) return const Center(child: Text("Ingen klasser funnet."));
-          return ListView(
-            children: docs.map((doc) => SizedBox(height: 1000, child: _buildOppsettSectionForCategory(doc.id, (doc.data() as Map)['name']))).toList(),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildOppsettToolbar(),
+              const SizedBox(height: 16),
+              for (final doc in docs) ...[
+                _buildOppsettSectionForCategory(doc.id, (doc.data() as Map)['name']),
+                const SizedBox(height: 28),
+              ],
+            ],
           );
         }
       );
     } else {
       content = _buildOppsettSectionForCategory(_selectedCategoryId!, null);
     }
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
-          child: _buildInlineCategoryFilter(),
-        ),
-        if (_selectedCategoryId == 'all')
-          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: _matchesQuery().snapshots(),
-            builder: (ctx, snap) => _buildOppsettToolbar(
-              showPublish: snap.hasData && snap.data!.docs.isNotEmpty,
-            ),
-          ),
-        Expanded(child: content),
-      ],
+
+    return SingleChildScrollView(
+      child: AdminPageBody(
+        top: 24,
+        child: LayoutBuilder(builder: (context, c) {
+          if (c.maxWidth < 900) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildInlineCategoryFilter(countBy: 'teams'),
+                const SizedBox(height: 16),
+                content,
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 260, child: _buildOppsettClassList()),
+              const SizedBox(width: 20),
+              Expanded(child: content),
+            ],
+          );
+        }),
+      ),
     );
   }
+
+  /// Venstre kolonne i Oppsett: klasser med fase, lag, puljer og fremdrift.
+  Widget _buildOppsettClassList() {
+    final db = FirebaseFirestore.instance;
+    return StreamBuilder<QuerySnapshot>(
+      stream: db.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+      builder: (ctx, catSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: db.collection('teams').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+          builder: (ctx, teamSnap) {
+            return StreamBuilder<QuerySnapshot>(
+              stream: db.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).snapshots(),
+              builder: (ctx, matchSnap) {
+                final cats = catSnap.data?.docs ?? const <QueryDocumentSnapshot>[];
+                if (catSnap.hasData && cats.isNotEmpty && _selectedCategoryId == null) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _selectedCategoryId == null) setState(() { _selectedCategoryId = 'all'; });
+                  });
+                }
+                final teams = teamSnap.data?.docs ?? const <QueryDocumentSnapshot>[];
+                final matches = matchSnap.data?.docs ?? const <QueryDocumentSnapshot>[];
+
+                Widget classButton({required bool on, required VoidCallback onTap, required Widget child}) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Material(
+                      color: on ? AppColors.adminInfoBg : Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: BorderSide(color: on ? AppColors.adminInfoBorder : Colors.transparent),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        hoverColor: AppColors.adminSurfaceElevated,
+                        onTap: onTap,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          child: child,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return AdminCard(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+                        child: Text('KLASSER', style: AdminText.kicker()),
+                      ),
+                      if (!catSnap.hasData)
+                        const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+                      else if (cats.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Text('Ingen klasser funnet.', style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+                        ),
+                      for (final c in cats)
+                        Builder(builder: (context) {
+                          final cm = matches.where((m) => (m.data() as Map)['category_id'] == c.id).toList();
+                          final ct = teams.where((t) => (t.data() as Map)['category_id'] == c.id).toList();
+                          final groupsN = ct.map((t) => (t.data() as Map)['group']).whereType<String>().toSet().length;
+                          final done = cm.where((m) => (m.data() as Map)['status'] == 'finished').length;
+                          final hasPlayoffStarted = cm.any((m) {
+                            final d = m.data() as Map;
+                            return d['stage'] == 'playoff' && (d['status'] == 'live' || d['status'] == 'finished');
+                          });
+                          Widget phase;
+                          if (cm.isEmpty) {
+                            phase = const AdminPill.neutral('Ikke generert', height: 20);
+                          } else if (done == cm.length) {
+                            phase = const AdminPill.success('Ferdig', height: 20);
+                          } else if (hasPlayoffStarted) {
+                            phase = const AdminPill.info('Sluttspill', height: 20);
+                          } else {
+                            phase = const AdminPill.neutral('Gruppespill', height: 20);
+                          }
+                          final meta = [
+                            '${ct.length} lag',
+                            if (groupsN > 0) '$groupsN ${groupsN == 1 ? 'pulje' : 'puljer'}',
+                            if (cm.isNotEmpty) '$done/${cm.length} ferdig',
+                          ].join(' · ');
+                          return classButton(
+                            on: _selectedCategoryId == c.id,
+                            onTap: () => setState(() => _selectedCategoryId = c.id),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(children: [
+                                  Expanded(
+                                    child: Text('${(c.data() as Map)['name'] ?? 'Klasse'}',
+                                        style: AdminText.ui(size: 14, weight: FontWeight.w700),
+                                        overflow: TextOverflow.ellipsis),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  phase,
+                                ]),
+                                const SizedBox(height: 4),
+                                Text(meta, style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+                              ],
+                            ),
+                          );
+                        }),
+                      Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), color: AppColors.adminDivider),
+                      classButton(
+                        on: _selectedCategoryId == 'all',
+                        onTap: () => setState(() => _selectedCategoryId = 'all'),
+                        child: Text('Vis alle klasser samlet',
+                            style: AdminText.ui(size: 14, weight: FontWeight.w600, color: AppColors.adminPrimary)),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildOppsettSectionForCategory(String categoryId, String? categoryName) {
 
     return StreamBuilder<QuerySnapshot>(
@@ -2889,8 +3882,11 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           stream: FirebaseFirestore.instance.collection('matches').where('tournament_id', isEqualTo: widget.tournamentId).where('category_id', isEqualTo: categoryId).snapshots(),
 
           builder: (ctx2, matchSnap) {
+            return StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance.collection('categories').doc(categoryId).snapshots(),
+              builder: (ctx3, catDocSnap) {
             if (!teamSnap.hasData || !matchSnap.hasData) {
-              return const Center(child: CircularProgressIndicator());
+              return const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()));
             }
 
             final teams      = teamSnap.data!.docs;
@@ -2923,48 +3919,139 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
             final hasPlayoffs = allMatches.any((m) => (m.data() as Map)['stage'] == 'playoff');
 
+            // ── Visningstall for overskrift og steg ──
+            final title = categoryName ?? ((catDocSnap.data?.data() as Map<String, dynamic>?)?['name'] as String?) ?? 'Klasse';
+            final courts = allMatches
+                .map((m) => (m.data() as Map)['court'] as String?)
+                .whereType<String>()
+                .where((c) => c.isNotEmpty && c != 'TBD')
+                .map(_courtShort)
+                .toSet()
+                .toList()
+              ..sort();
+            final brackets = allMatches
+                .where((m) => (m.data() as Map)['stage'] == 'playoff')
+                .map((m) => (m.data() as Map)['bracket'] as String?)
+                .whereType<String>()
+                .toSet()
+                .toList()
+              ..sort();
+            final meta = [
+              '${teams.length} lag',
+              if (sortedGroups.isNotEmpty) '${sortedGroups.length} ${sortedGroups.length == 1 ? 'pulje' : 'puljer'}',
+              if (brackets.length == 1) '${brackets.first}-bracket',
+              if (brackets.length > 1) '${brackets.sublist(0, brackets.length - 1).join('-, ')}- og ${brackets.last}-bracket',
+              if (courts.isNotEmpty) 'baner ${courts.join(', ')}',
+            ].join(' · ');
+
+            final seeded = teams.where((t) => (t.data() as Map)['seed'] != null).length;
+            final groupMatches = allMatches.where((m) => (m.data() as Map)['stage'] == 'group').toList();
+            final groupDone = groupMatches.where((m) => (m.data() as Map)['status'] == 'finished').length;
+            final playoffMatches = allMatches.where((m) => (m.data() as Map)['stage'] == 'playoff').toList();
+            final playoffDone = playoffMatches.where((m) => (m.data() as Map)['status'] == 'finished').length;
+
+            final steps = _buildOppsettToolbar(
+              subs: {
+                'Seeding': '$seeded lag seedet',
+                'Gruppespill': groupMatches.isEmpty ? 'Ikke generert' : '$groupDone / ${groupMatches.length} kamper ferdig',
+                'Sluttspill': playoffMatches.isEmpty
+                    ? 'Ikke generert'
+                    : '$playoffDone / ${playoffMatches.length}${brackets.isNotEmpty ? ' · ${brackets.join('/')}-bracket' : ''}',
+              },
+              done: {
+                if (hasMatches && seeded == teams.length && teams.isNotEmpty) 'Seeding',
+                if (groupMatches.isNotEmpty && groupDone == groupMatches.length) 'Gruppespill',
+                if (playoffMatches.isNotEmpty && playoffDone == playoffMatches.length) 'Sluttspill',
+              },
+            );
+
+            final single = _selectedCategoryId != 'all';
+
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-            if (categoryName != null) Padding(padding: const EdgeInsets.all(16), child: Text(categoryName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.adminPrimary))),
-                // Top sub-menu bar
-                if (_selectedCategoryId != 'all')
-                  _buildOppsettToolbar(showPublish: hasMatches),
-                // Tab content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (!hasMatches) ...[
-                          _buildSeedingCard(sortedTeams, hasMatches),
-                          const SizedBox(height: 16),
-                          if (_selectedCategoryId != 'all') _buildGenerateCard(),
-                        ] else ...[
-                          if (_selectedOppsettTab == 'Seeding')
-                            _buildSeedingCard(sortedTeams, hasMatches),
-
-                          if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
-                            _buildGroupPreviewCard(groupTeams, sortedGroups),
-
-                          if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
-                            _buildPlayoffPreviewCard(allMatches, matchNumById),
-
-                          if ((_selectedOppsettTab == 'Gruppespill' && sortedGroups.isEmpty) ||
-                              (_selectedOppsettTab == 'Sluttspill' && !hasPlayoffs))
-                            const Center(child: Text("Ingen kamper i denne visningen.")),
-
-                          if (_selectedOppsettTab != 'Seeding' &&
-                              _selectedOppsettTab != 'Gruppespill' &&
-                              _selectedOppsettTab != 'Sluttspill')
-                            const Center(child: Text("Ingen kamper i denne visningen.")),
-                        ]
+                        Text(title, style: AdminText.ui(size: 22, weight: FontWeight.w700)),
+                        const SizedBox(height: 2),
+                        Text(meta, style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
                       ],
                     ),
-                  ),
+                    if (single)
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (hasMatches)
+                            AdminButton(
+                              label: 'Sync',
+                              icon: Icons.sync,
+                              onPressed: () async {
+                                await _resolvePendingMatches();
+                                _snack("Bracket synkronisert.");
+                              },
+                            ),
+                          Tooltip(
+                            message: hasMatches
+                                ? 'Allerede generert – nullstill turneringen for å generere på nytt'
+                                : 'Setter opp grupper, runde 2 og sluttspill automatisk',
+                            child: AdminButton(
+                              label: 'Generer grupper + sluttspill',
+                              icon: Icons.auto_awesome,
+                              primary: !hasMatches,
+                              onPressed: hasMatches ? null : _generateGroupStage,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
+                const SizedBox(height: 16),
+                // Steg-meny
+                if (single) ...[
+                  steps,
+                  const SizedBox(height: 16),
+                ],
+                if (!hasMatches) ...[
+                  _buildSeedingCard(sortedTeams, hasMatches),
+                  const SizedBox(height: 16),
+                  if (_selectedCategoryId != 'all') _buildGenerateCard(),
+                ] else ...[
+                  if (_selectedOppsettTab == 'Seeding')
+                    _buildSeedingCard(sortedTeams, hasMatches),
+
+                  if (_selectedOppsettTab == 'Gruppespill' && sortedGroups.isNotEmpty)
+                    _buildGroupPreviewCard(groupTeams, sortedGroups, groupMatches, matchNumById),
+
+                  if (_selectedOppsettTab == 'Sluttspill' && hasPlayoffs)
+                    _buildPlayoffPreviewCard(allMatches, matchNumById),
+
+                  if ((_selectedOppsettTab == 'Gruppespill' && sortedGroups.isEmpty) ||
+                      (_selectedOppsettTab == 'Sluttspill' && !hasPlayoffs))
+                    AdminCard(
+                      padding: const EdgeInsets.all(32),
+                      child: Center(child: Text("Ingen kamper i denne visningen.", style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary))),
+                    ),
+
+                  if (_selectedOppsettTab != 'Seeding' &&
+                      _selectedOppsettTab != 'Gruppespill' &&
+                      _selectedOppsettTab != 'Sluttspill')
+                    AdminCard(
+                      padding: const EdgeInsets.all(32),
+                      child: Center(child: Text("Ingen kamper i denne visningen.", style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary))),
+                    ),
+                ]
               ],
+            );
+              },
             );
           },
         );
@@ -2984,423 +4071,454 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       return String.fromCharCode(65 + gIdx);
     }
 
-    final swapName = _swapSelectionDoc != null
-        ? (_swapSelectionDoc!.data() as Map)['team_name'] as String? ?? ''
-        : null;
+    final swapData = _swapSelectionDoc != null ? (_swapSelectionDoc!.data() as Map) : null;
+    final swapName = swapData != null ? swapData['team_name'] as String? ?? '' : null;
+    final swapSeed = swapData != null ? (swapData['seed'] as num?)?.toInt() : null;
 
-    return Card(
-      elevation: 2,
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-            color: AppColors.adminSurfaceElevated,
-            child: Row(children: [
-              const Icon(Icons.format_list_numbered, color: AppColors.adminPrimary, size: 20),
-              const SizedBox(width: 10),
-              const Text("Seeding-oversikt",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
-              const Spacer(),
-              if (swapName != null) ...[
-                const Icon(Icons.swap_vert, size: 14, color: AppColors.adminPrimary),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text("Velg lag å bytte med «$swapName»",
-                      style: const TextStyle(fontSize: 12, color: AppColors.adminPrimary, fontWeight: FontWeight.bold),
-                      overflow: TextOverflow.ellipsis),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => setState(() => _swapSelectionDoc = null),
-                  child: const Icon(Icons.close, size: 16, color: AppColors.adminPrimary),
-                ),
-              ] else
-                Text("$numTeams lag · $numGroups ${numGroups == 1 ? 'pulje' : 'puljer'}",
-                    style: const TextStyle(fontSize: 12, color: AppColors.adminTextSecondary)),
-            ]),
+    final headStyle = AdminText.ui(size: 12, weight: FontWeight.w600, color: AppColors.adminTextSecondary);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (swapName != null) ...[
+          AdminInfoBanner(
+            icon: Icons.swap_vert,
+            message: Text.rich(TextSpan(children: [
+              const TextSpan(text: 'Velg lag å bytte med «'),
+              TextSpan(text: swapName, style: AdminText.ui(size: 14, weight: FontWeight.w700)),
+              TextSpan(text: '»${swapSeed != null ? ' (seed $swapSeed)' : ''}'),
+            ])),
+            action: AdminButton(
+              label: 'Avbryt',
+              height: 36,
+              onPressed: () => setState(() => _swapSelectionDoc = null),
+            ),
           ),
+          const SizedBox(height: 12),
+        ],
+        AdminCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AdminCardHeader(
+                title: "Seeding-oversikt",
+                leading: const Icon(Icons.format_list_numbered, color: AppColors.adminPrimary, size: 20),
+                trailing: Text("$numTeams lag · $numGroups ${numGroups == 1 ? 'pulje' : 'puljer'}",
+                    style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary)),
+              ),
 
-          // Kolonneoverskrifter
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            color: AppColors.adminSurface,
-            child: const Row(children: [
-              SizedBox(width: 52, child: Text("Seed", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.adminTextSecondary))),
-              Expanded(child: Text("Lag", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.adminTextSecondary))),
-              SizedBox(width: 70, child: Center(child: Text("Poeng", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.adminTextSecondary)))),
-              SizedBox(width: 90, child: Center(child: Text("Pulje", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.adminTextSecondary)))),
-              SizedBox(width: 72),
-            ]),
-          ),
-          const Divider(height: 1),
-
-          // Lagrekker
-          ...sortedTeams.map((teamDoc) {
-            final d        = teamDoc.data() as Map<String, dynamic>;
-            final seed     = (d['seed'] as num?)?.toInt();
-            final points   = (d['team_points'] as num?)?.toInt() ?? 0;
-            final curGroup = d['group'] as String?;
-
-            final isSelected  = _swapSelectionDoc?.id == teamDoc.id;
-            final inSwapMode  = _swapSelectionDoc != null && !isSelected;
-
-            final displayGroup  = curGroup ?? (seed != null ? serpentineGroup(seed) : '?');
-            final isExpected    = curGroup == null && seed != null;
-
-            return Column(children: [
+              AdminHScroll(
+                minWidth: 620,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+              // Kolonneoverskrifter
               Container(
-                color: isSelected ? AppColors.adminPrimary.withValues(alpha: 0.08) : null,
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                padding: const EdgeInsets.fromLTRB(20, 10, 16, 10),
+                color: AppColors.adminTableHead,
                 child: Row(children: [
-                  // Seed badge
-                  SizedBox(
-                    width: 52,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? AppColors.adminPrimary.withValues(alpha: 0.15)
-                            : AppColors.adminSurfaceElevated,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Center(
-                        child: Text('${seed ?? '–'}',
-                            style: TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.bold,
-                              color: isSelected ? AppColors.adminPrimary : AppColors.adminText,
-                            )),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // Lagnavn + spillere
-                  Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(d['team_name'] ?? 'Ukjent',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13,
-                          color: isSelected ? AppColors.adminPrimary : AppColors.adminText,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        "${d['player1_name'] ?? ''} & ${d['player2_name'] ?? ''}",
-                        style: const TextStyle(fontSize: 11, color: AppColors.adminTextSecondary),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  )),
-
-                  // Poeng
-                  SizedBox(
-                    width: 70,
-                    child: Center(child: Text('$points',
-                        style: const TextStyle(fontSize: 12, color: AppColors.adminTextSecondary))),
-                  ),
-
-                  // Puljebadge
-                  SizedBox(
-                    width: 90,
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: isExpected
-                              ? Colors.transparent
-                              : AppColors.adminSurfaceElevated,
-                          borderRadius: BorderRadius.circular(6),
-                          border: isExpected
-                              ? Border.all(color: AppColors.adminSurfaceElevated)
-                              : null,
-                        ),
-                        child: Text('Pulje $displayGroup',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 11, fontWeight: FontWeight.bold,
-                            color: isExpected
-                                ? AppColors.adminTextSecondary
-                                : AppColors.adminPrimary,
-                            fontStyle: isExpected ? FontStyle.italic : FontStyle.normal,
-                          )),
-                      ),
-                    ),
-                  ),
-
-                  // Handlingsknapp
-                  SizedBox(
-                    width: 72,
-                    child: isSelected
-                        ? TextButton(
-                            onPressed: () => setState(() => _swapSelectionDoc = null),
-                            child: const Text("Avbryt", style: TextStyle(fontSize: 11)),
-                          )
-                        : inSwapMode
-                            ? ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.adminPrimary,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                  textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                                  minimumSize: const Size(60, 32),
-                                ),
-                                onPressed: () => _confirmAndSwap(_swapSelectionDoc!, teamDoc),
-                                child: const Text("Velg"),
-                              )
-                            : TextButton(
-                                style: TextButton.styleFrom(foregroundColor: AppColors.adminTextSecondary),
-                                onPressed: () => setState(() => _swapSelectionDoc = teamDoc),
-                                child: const Text("Bytt", style: TextStyle(fontSize: 11)),
-                              ),
-                  ),
+                  SizedBox(width: 52, child: Text("Seed", style: headStyle)),
+                  Expanded(child: Text("Lag", style: headStyle)),
+                  SizedBox(width: 70, child: Text("Poeng", textAlign: TextAlign.right, style: headStyle)),
+                  const SizedBox(width: 20),
+                  SizedBox(width: 90, child: Text("Pulje", style: headStyle)),
+                  const SizedBox(width: 96),
                 ]),
               ),
               const Divider(height: 1),
-            ]);
-          }),
 
-          // Bunntekst
-          if (sortedTeams.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text("Ingen lag registrert enda.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.adminTextSecondary)),
-            ),
-        ],
-      ),
+              // Lagrekker
+              ...sortedTeams.map((teamDoc) {
+                final d        = teamDoc.data() as Map<String, dynamic>;
+                final seed     = (d['seed'] as num?)?.toInt();
+                final points   = (d['team_points'] as num?)?.toInt() ?? 0;
+                final curGroup = d['group'] as String?;
+
+                final isSelected  = _swapSelectionDoc?.id == teamDoc.id;
+                final inSwapMode  = _swapSelectionDoc != null && !isSelected;
+
+                final displayGroup  = curGroup ?? (seed != null ? serpentineGroup(seed) : '?');
+                final isExpected    = curGroup == null && seed != null;
+
+                return Container(
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.adminInfoBg : null,
+                    border: const Border(bottom: BorderSide(color: AppColors.adminDivider)),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(20, 10, 16, 10),
+                  child: Row(children: [
+                    // Seed badge
+                    SizedBox(
+                      width: 52,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          width: 30,
+                          height: 30,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppColors.adminPrimary.withValues(alpha: 0.15) : AppColors.adminMuted,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text('${seed ?? '–'}',
+                              style: AdminText.mono(
+                                size: 13, weight: FontWeight.w600,
+                                color: isSelected ? AppColors.adminPrimary : AppColors.adminText,
+                              )),
+                        ),
+                      ),
+                    ),
+
+                    // Lagnavn + spillere
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(d['team_name'] ?? 'Ukjent',
+                          style: AdminText.ui(
+                            size: 14, weight: FontWeight.w700,
+                            color: isSelected ? AppColors.adminPrimary : AppColors.adminText,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          "${d['player1_name'] ?? ''} · ${d['player2_name'] ?? ''}",
+                          style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    )),
+
+                    // Poeng
+                    SizedBox(
+                      width: 70,
+                      child: Text('$points', textAlign: TextAlign.right, style: AdminText.mono(size: 13)),
+                    ),
+                    const SizedBox(width: 20),
+
+                    // Puljebadge
+                    SizedBox(
+                      width: 90,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isExpected ? Colors.transparent : AppColors.adminSurfaceElevated,
+                            borderRadius: BorderRadius.circular(999),
+                            border: isExpected ? Border.all(color: AppColors.adminOutline) : null,
+                          ),
+                          child: Text('Pulje $displayGroup',
+                            style: AdminText.ui(
+                              size: 12, weight: FontWeight.w600,
+                              color: isExpected ? AppColors.adminTextSecondary : AppColors.adminTextBody,
+                              style: isExpected ? FontStyle.italic : FontStyle.normal,
+                            )),
+                        ),
+                      ),
+                    ),
+
+                    // Handlingsknapp
+                    SizedBox(
+                      width: 96,
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: isSelected
+                            ? TextButton(
+                                onPressed: () => setState(() => _swapSelectionDoc = null),
+                                child: const Text("Avbryt"),
+                              )
+                            : inSwapMode
+                                ? AdminButton(
+                                    label: 'Bytt hit',
+                                    height: 36,
+                                    foreground: AppColors.adminPrimary,
+                                    borderColor: AppColors.adminInfoBorder,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    onPressed: () => _confirmAndSwap(_swapSelectionDoc!, teamDoc),
+                                  )
+                                : AdminGhostIconButton(
+                                    icon: Icons.swap_vert,
+                                    tooltip: 'Bytt seed',
+                                    onPressed: () => setState(() => _swapSelectionDoc = teamDoc),
+                                  ),
+                      ),
+                    ),
+                  ]),
+                );
+              }),
+                  ],
+                ),
+              ),
+
+              // Bunntekst
+              if (sortedTeams.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text("Ingen lag registrert enda.",
+                      textAlign: TextAlign.center,
+                      style: AdminText.ui(size: 14, color: AppColors.adminTextSecondary)),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildGenerateCard() {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Row(children: [
-              Icon(Icons.emoji_events, color: AppColors.adminPrimary, size: 24),
-              SizedBox(width: 12),
-              Text("Generer turneringsoppsett",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
-            ]),
-            const SizedBox(height: 8),
-            const Text(
-              "Setter opp grupper, runde 2 og sluttspillkryssninger automatisk basert på seeding. "
-              "Etter generering kan du publisere oppsettet for deltakere.",
-              style: TextStyle(fontSize: 13, color: AppColors.adminTextSecondary),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.auto_awesome, size: 18),
-              label: const Text("Generer Grupper + Sluttspill"),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-              ),
+    return AdminCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const AdminIconTile(icon: Icons.emoji_events_outlined),
+            const SizedBox(width: 12),
+            Text("Generer turneringsoppsett",
+                style: AdminText.ui(size: 16, weight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 10),
+          Text(
+            "Setter opp grupper, runde 2 og sluttspillkryssninger automatisk basert på seeding. "
+            "Etter generering kan du publisere oppsettet for deltakere.",
+            style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary),
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: AdminButton.primary(
+              icon: Icons.auto_awesome,
+              label: "Generer grupper + sluttspill",
               onPressed: _generateGroupStage,
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-    Widget _buildPublishButtonInline() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).limit(1).snapshots(),
-      builder: (ctx, snap) {
-        bool isPub = false;
-        if (snap.hasData && snap.data!.docs.isNotEmpty) {
-          isPub = (snap.data!.docs.first.data() as Map)['published'] == true;
-        }
-        return ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: isPub ? AppColors.adminSurfaceElevated : AppColors.coral,
-            foregroundColor: isPub ? AppColors.adminTextSecondary : Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            elevation: 0,
-          ),
-          icon: Icon(isPub ? Icons.visibility_off : Icons.visibility, size: 20),
-          label: Text(isPub ? "Skjul turnering" : "Publiser turnering offentlig"),
-          onPressed: () { if (isPub) _unpublishCategory(); else _publishCategory(); },
-        );
-      },
-    );
-  }
-
-  Widget _buildOppsettToolbar({required bool showPublish}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppColors.adminSurfaceElevated,
-      ),
-      child: Row(
-        children: [
-          _buildOppsettSubTab('Gruppespill'),
-          const SizedBox(width: 8),
-          _buildOppsettSubTab('Sluttspill'),
-          const SizedBox(width: 8),
-          _buildOppsettSubTab('Seeding'),
-          const Spacer(),
-          if (showPublish) ...[
-            _buildPublishButtonInline(),
-            const SizedBox(width: 12),
-          ],
-          ElevatedButton.icon(
-            icon: const Icon(Icons.edit, size: 16),
-            label: const Text("Rediger turnering"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.adminSurface,
-              foregroundColor: AppColors.adminPrimary,
-              elevation: 0,
-              side: const BorderSide(color: AppColors.adminPrimary),
-            ),
-            onPressed: () async {
-              final doc = await FirebaseFirestore.instance
-                  .collection('tournaments')
-                  .doc(widget.tournamentId)
-                  .get();
-              if (!context.mounted) return;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EditTournamentPage(
-                    tournamentId: widget.tournamentId,
-                    initialData: doc.data() ?? {},
-                  ),
-                ),
-              );
-            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildOppsettSubTab(String title) {
+  /// Steg-meny for Oppsett: Seeding → Gruppespill → Sluttspill.
+  Widget _buildOppsettToolbar({Map<String, String> subs = const {}, Set<String> done = const {}}) {
+    const order = ['Seeding', 'Gruppespill', 'Sluttspill'];
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        for (int i = 0; i < order.length; i++)
+          _buildOppsettSubTab(order[i], number: i + 1, subtitle: subs[order[i]], done: done.contains(order[i])),
+      ],
+    );
+  }
+
+  Widget _buildOppsettSubTab(String title, {int number = 1, String? subtitle, bool done = false}) {
     final isSelected = _selectedOppsettTab == title;
+    final Color numBg = done ? AppColors.green : (isSelected ? AppColors.adminPrimary : AppColors.adminMuted);
+    final Color numFg = (done || isSelected) ? Colors.white : AppColors.adminTextMuted;
     return InkWell(
       onTap: () => setState(() => _selectedOppsettTab = title),
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(10),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        constraints: const BoxConstraints(minWidth: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.adminPrimary.withValues(alpha: 0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
+          color: AppColors.adminSurface,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isSelected ? AppColors.adminPrimary : Colors.transparent,
+            color: isSelected ? AppColors.adminPrimary : AppColors.adminOutline,
+            width: isSelected ? 2 : 1,
           ),
         ),
-        child: Text(
-          title,
-          style: TextStyle(
-            color: isSelected ? AppColors.adminPrimary : AppColors.adminTextSecondary,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 26,
+              height: 26,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: numBg, shape: BoxShape.circle),
+              child: done
+                  ? const Icon(Icons.check, size: 15, color: Colors.white)
+                  : Text('$number', style: AdminText.mono(size: 12, weight: FontWeight.w600, color: numFg)),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title, style: AdminText.ui(size: 14, weight: FontWeight.w700)),
+                if (subtitle != null)
+                  Text(subtitle, style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildGroupPreviewCard(
-      Map<String, List<DocumentSnapshot>> groupTeams, List<String> sortedGroups) {
-    return Card(
-      elevation: 2,
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-            color: AppColors.adminSurfaceElevated,
-            child: const Row(children: [
-              Icon(Icons.grid_view, color: AppColors.adminPrimary, size: 20),
-              SizedBox(width: 10),
-              Text("Puljeoversikt",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.adminText)),
+      Map<String, List<DocumentSnapshot>> groupTeams,
+      List<String> sortedGroups,
+      List<DocumentSnapshot> groupMatches,
+      Map<String, int> matchNumById) {
+    Widget groupCard(String g) {
+      final gTeams = List<DocumentSnapshot>.from(groupTeams[g] ?? [])
+        ..sort((a, b) {
+          final as_ = (a.data() as Map)['seed'] as int? ?? 999;
+          final bs  = (b.data() as Map)['seed'] as int? ?? 999;
+          return as_.compareTo(bs);
+        });
+
+      final gMatches = groupMatches.where((m) => (m.data() as Map)['group'] == g).toList()
+        ..sort((a, b) {
+          final ta = (a.data() as Map)['match_type'] as String? ?? '';
+          final tb = (b.data() as Map)['match_type'] as String? ?? '';
+          return ta.compareTo(tb);
+        });
+      final gDone = gMatches.where((m) => (m.data() as Map)['status'] == 'finished').length;
+
+      // Seire/tap og sett fra ferdigspilte puljekamper (kun visning)
+      final wins = <String, int>{}, losses = <String, int>{}, setsW = <String, int>{}, setsL = <String, int>{};
+      for (final m in gMatches) {
+        final d = m.data() as Map;
+        if (d['status'] != 'finished') continue;
+        final a = d['team_a_id'] as String? ?? '';
+        final b = d['team_b_id'] as String? ?? '';
+        final hs = d['home_score'] as int? ?? 0;
+        final as2 = d['away_score'] as int? ?? 0;
+        setsW[a] = (setsW[a] ?? 0) + hs; setsL[a] = (setsL[a] ?? 0) + as2;
+        setsW[b] = (setsW[b] ?? 0) + as2; setsL[b] = (setsL[b] ?? 0) + hs;
+        if (hs > as2) {
+          wins[a] = (wins[a] ?? 0) + 1; losses[b] = (losses[b] ?? 0) + 1;
+        } else if (as2 > hs) {
+          wins[b] = (wins[b] ?? 0) + 1; losses[a] = (losses[a] ?? 0) + 1;
+        }
+      }
+
+      final head = AdminText.ui(size: 11, weight: FontWeight.w600, color: AppColors.adminTextSecondary);
+      Widget gridRow(List<Widget> cells, {EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 8)}) => Padding(
+            padding: padding,
+            child: Row(children: [
+              SizedBox(width: 28, child: cells[0]),
+              const SizedBox(width: 8),
+              SizedBox(width: 40, child: cells[1]),
+              const SizedBox(width: 8),
+              Expanded(child: cells[2]),
+              const SizedBox(width: 8),
+              SizedBox(width: 44, child: cells[3]),
+              const SizedBox(width: 8),
+              SizedBox(width: 52, child: cells[4]),
             ]),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: sortedGroups.map((g) {
-                final gTeams = List<DocumentSnapshot>.from(groupTeams[g] ?? [])
-                  ..sort((a, b) {
-                    final as_ = (a.data() as Map)['seed'] as int? ?? 999;
-                    final bs  = (b.data() as Map)['seed'] as int? ?? 999;
-                    return as_.compareTo(bs);
-                  });
+          );
 
-                final placeBg = [
-                  Colors.amber[700]!, AppColors.adminTextSecondary,
-                  Colors.brown[400]!, AppColors.adminSurfaceElevated,
-                ];
-
-                return Container(
-                  width: 210,
-                  decoration: BoxDecoration(
-                    color: AppColors.adminSurface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.adminSurfaceElevated),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                        decoration: const BoxDecoration(
-                          color: AppColors.adminSurfaceElevated,
-                          borderRadius: BorderRadius.vertical(top: Radius.circular(10)),
-                        ),
-                        child: Text("Pulje $g",
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, color: AppColors.adminText, fontSize: 14)),
-                      ),
-                      ...gTeams.asMap().entries.map((e) {
-                        final idx = e.key;
-                        final td = e.value.data() as Map<String, dynamic>;
-                        final seed = (td['seed'] as num?)?.toInt();
-                        final placement = (td['group_placement'] as num?)?.toInt();
-                        final rank = placement ?? (idx + 1);
-                        final bgColor = (rank >= 1 && rank <= 4) ? placeBg[rank - 1] : AppColors.adminSurfaceElevated;
-
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
-                          child: Row(children: [
-                            CircleAvatar(
-                              radius: 13,
-                              backgroundColor: bgColor,
-                              child: Text('$rank',
-                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white)),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text(
-                              td['team_name'] ?? 'Ukjent',
-                              style: const TextStyle(fontSize: 12, color: AppColors.adminText),
-                              overflow: TextOverflow.ellipsis,
-                            )),
-                            if (seed != null)
-                              Text('S$seed',
-                                  style: const TextStyle(fontSize: 10, color: AppColors.adminTextSecondary)),
-                          ]),
-                        );
-                      }),
-                      const SizedBox(height: 4),
-                    ],
-                  ),
-                );
-              }).toList(),
+      return AdminCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.adminDivider))),
+              child: Row(children: [
+                Expanded(child: Text("Pulje $g", style: AdminText.ui(size: 16, weight: FontWeight.w700))),
+                Text('$gDone / ${gMatches.length} ferdig', style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
+              ]),
             ),
+            gridRow([
+              Text('#', style: head),
+              Text('Seed', style: head),
+              Text('Lag', style: head),
+              Text('V–T', style: head, textAlign: TextAlign.center),
+              Text('Sett', style: head, textAlign: TextAlign.right),
+            ], padding: const EdgeInsets.fromLTRB(16, 10, 16, 4)),
+            ...gTeams.asMap().entries.map((e) {
+              final idx = e.key;
+              final td = e.value.data() as Map<String, dynamic>;
+              final tid = e.value.id;
+              final seed = (td['seed'] as num?)?.toInt();
+              final placement = (td['group_placement'] as num?)?.toInt();
+              final rank = placement ?? (idx + 1);
+              return gridRow([
+                Text('$rank', style: AdminText.mono(size: 14, weight: FontWeight.w600)),
+                Text(seed != null ? 'S$seed' : '–', style: AdminText.mono(size: 12, color: AppColors.adminTextMuted)),
+                Text(td['team_name'] ?? 'Ukjent', style: AdminText.ui(size: 14, weight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+                Text('${wins[tid] ?? 0}–${losses[tid] ?? 0}', style: AdminText.mono(size: 13), textAlign: TextAlign.center),
+                Text('${setsW[tid] ?? 0}–${setsL[tid] ?? 0}', style: AdminText.mono(size: 13, color: AppColors.adminTextMuted), textAlign: TextAlign.right),
+              ]);
+            }),
+            if (gMatches.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.adminDivider))),
+                child: Column(
+                  children: [
+                    for (final m in gMatches) _groupMatchLine(m, matchNumById),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(builder: (context, c) {
+      const gap = 16.0;
+      final cols = c.maxWidth >= 780 ? 2 : 1;
+      final w = cols == 1 ? c.maxWidth : (c.maxWidth - gap) / 2 - 0.1;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [for (final g in sortedGroups) SizedBox(width: w, child: groupCard(g))],
+      );
+    });
+  }
+
+  Widget _groupMatchLine(DocumentSnapshot m, Map<String, int> matchNumById) {
+    final d = m.data() as Map<String, dynamic>;
+    final mType = d['match_type'] as String? ?? '';
+    final k = const {'group_match_1': 'K1', 'group_match_2': 'K2', 'group_match_3': 'K3', 'group_match_4': 'K4'}[mType]
+        ?? (d['match_number'] != null ? '#${d['match_number']}' : '');
+    final status = d['status'] as String? ?? 'scheduled';
+    final isPending = status == 'pending';
+    final a = _resolveTeamDisplayName(d, 'team_a', matchNumById);
+    final b = _resolveTeamDisplayName(d, 'team_b', matchNumById);
+    String score;
+    if (status == 'finished') {
+      score = (d['walkover'] as bool? ?? false) ? 'Walkover' : '${d['home_score'] ?? 0} – ${d['away_score'] ?? 0}';
+    } else if (status == 'live') {
+      score = 'LIVE';
+    } else {
+      score = (d['match_time'] as String?)?.isNotEmpty == true ? d['match_time'] as String : '–';
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(width: 26, child: Text(k, style: AdminText.mono(size: 11, color: AppColors.adminPrimary))),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('$a – $b',
+                style: AdminText.ui(
+                  size: 13,
+                  color: isPending ? AppColors.adminTextSecondary : AppColors.adminTextBody,
+                  style: isPending ? FontStyle.italic : null,
+                ),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 10),
+          Text(score, style: AdminText.mono(size: 13, weight: FontWeight.w600,
+              color: status == 'live' ? AppColors.coralDeep : AppColors.adminText)),
+          SizedBox(
+            width: 40,
+            child: isPending
+                ? null
+                : AdminGhostIconButton(
+                    icon: Icons.edit_outlined,
+                    size: 36,
+                    iconSize: 16,
+                    tooltip: 'Rediger kamp',
+                    onPressed: () => _showMatchEditDialog(m),
+                  ),
           ),
         ],
       ),
@@ -3465,6 +4583,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         final d        = m.data() as Map<String, dynamic>;
         final status   = d['status'] as String? ?? 'pending';
         final isFinished = status == 'finished';
+        final isLive     = status == 'live';
         final isPending  = status == 'pending' ||
             (d['team_a_id'] as String? ?? '') == 'placeholder' ||
             (d['team_b_id'] as String? ?? '') == 'placeholder';
@@ -3478,26 +4597,41 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         final homeWin  = isFinished && homeS > awayS;
         final awayWin  = isFinished && awayS > homeS;
 
-        final statusColor = isFinished
-            ? AppColors.green
-            : isPending
-                ? AppColors.adminTextSecondary
-                : AppColors.adminPrimary;
+        final Widget statusPill = isFinished
+            ? AdminPill(label: '$homeS – $awayS', background: const Color(0x1F1F7556), foreground: AppColors.green, height: 22, mono: true)
+            : isLive
+                ? const AdminPill.live(height: 22)
+                : isPending
+                    ? const AdminPill.neutral('Venter...', height: 22)
+                    : const AdminPill.neutral('Planlagt', height: 22);
+
+        TextStyle nameStyle(bool win) => AdminText.ui(
+              size: 13,
+              weight: win ? FontWeight.w700 : FontWeight.w500,
+              color: isPending
+                  ? AppColors.adminTextSecondary
+                  : win
+                      ? AppColors.green
+                      : AppColors.adminText,
+              style: isPending ? FontStyle.italic : FontStyle.normal,
+            );
 
         return InkWell(
           onTap: () => _showMatchEditDialog(m),
+          borderRadius: BorderRadius.circular(10),
           child: Container(
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             decoration: BoxDecoration(
               color: AppColors.adminSurface,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: isFinished
-                    ? AppColors.green.withValues(alpha: 0.3)
-                    : isPending
-                        ? AppColors.adminSurfaceElevated
-                        : AppColors.adminSurfaceElevated,
+                color: isLive
+                    ? AppColors.coral.withValues(alpha: 0.6)
+                    : isFinished
+                        ? AppColors.green.withValues(alpha: 0.3)
+                        : AppColors.adminOutline,
+                width: isLive ? 1.5 : 1,
               ),
             ),
             child: Column(
@@ -3506,93 +4640,24 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                 // Kamp-nummer + tid/bane + status
                 Row(children: [
                   if (num != null) ...[
-                    Text('K$num',
-                        style: const TextStyle(
-                            fontSize: 10,
-                            color: AppColors.adminPrimary,
-                            fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 6),
+                    Text('#$num', style: AdminText.mono(size: 11, weight: FontWeight.w600, color: AppColors.adminPrimary)),
+                    const SizedBox(width: 8),
                   ],
                   if (time != null && !isPending) ...[
-                    const Icon(Icons.access_time,
-                        size: 10, color: AppColors.adminTextSecondary),
-                    const SizedBox(width: 2),
-                    Text(time,
-                        style: const TextStyle(
-                            fontSize: 10, color: AppColors.adminTextSecondary)),
-                    const SizedBox(width: 4),
+                    Text(time, style: AdminText.mono(size: 11, color: AppColors.adminTextSecondary)),
+                    const SizedBox(width: 6),
                   ],
                   if (court != null && court != 'TBD' && !isPending)
-                    Text(court,
-                        style: const TextStyle(
-                            fontSize: 10, color: AppColors.adminTextSecondary)),
+                    Flexible(
+                      child: Text(court, style: AdminText.ui(size: 11, color: AppColors.adminTextSecondary), overflow: TextOverflow.ellipsis),
+                    ),
                   const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      isFinished
-                          ? '$homeS–$awayS'
-                          : isPending
-                              ? 'Venter'
-                              : 'Planlagt',
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: statusColor,
-                          fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                  statusPill,
                 ]),
-                const SizedBox(height: 5),
-                // Lag A
-                Row(children: [
-                  Expanded(
-                    child: Text(
-                      teamA,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: homeWin ? FontWeight.bold : FontWeight.normal,
-                        color: isPending
-                            ? AppColors.adminTextSecondary
-                            : homeWin
-                                ? AppColors.green
-                                : AppColors.adminText,
-                        fontStyle: isPending ? FontStyle.italic : FontStyle.normal,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ]),
-                // Versus-linje
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 1),
-                  child: Text('vs',
-                      style: TextStyle(
-                          fontSize: 9,
-                          color: AppColors.adminTextSecondary)),
-                ),
-                // Lag B
-                Row(children: [
-                  Expanded(
-                    child: Text(
-                      teamB,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: awayWin ? FontWeight.bold : FontWeight.normal,
-                        color: isPending
-                            ? AppColors.adminTextSecondary
-                            : awayWin
-                                ? AppColors.green
-                                : AppColors.adminText,
-                        fontStyle: isPending ? FontStyle.italic : FontStyle.normal,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ]),
+                const SizedBox(height: 6),
+                Text(teamA, style: nameStyle(homeWin), overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 2),
+                Text(teamB, style: nameStyle(awayWin), overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
@@ -3600,50 +4665,42 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       }
 
       return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Bracket-header
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             margin: const EdgeInsets.only(bottom: 10),
             decoration: BoxDecoration(
-              color: AppColors.adminPrimary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.adminPrimary.withValues(alpha: 0.3)),
+              color: AppColors.adminInfoBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.adminInfoBorder),
             ),
             child: Row(children: [
               Icon(
                 bracket == 'A'
-                    ? Icons.emoji_events
+                    ? Icons.emoji_events_outlined
                     : bracket == 'B'
-                        ? Icons.workspace_premium
-                        : Icons.military_tech,
-                size: 14,
+                        ? Icons.workspace_premium_outlined
+                        : Icons.military_tech_outlined,
+                size: 16,
                 color: AppColors.adminPrimary,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Text('$bracket-Bracket',
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.adminPrimary)),
+                  style: AdminText.ui(size: 14, weight: FontWeight.w700, color: AppColors.adminPrimaryDark)),
             ]),
           ),
           // Runde-seksjoner
           ...usedRounds.map((r) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Rundetittel
               Padding(
                 padding: const EdgeInsets.fromLTRB(0, 4, 0, 6),
                 child: Text(
-                  roundLabels[r] ?? r.toUpperCase(),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.adminTextSecondary,
-                    letterSpacing: 0.5,
-                  ),
+                  (roundLabels[r] ?? r).toUpperCase(),
+                  style: AdminText.kicker(),
                 ),
               ),
               // Kamper i denne runden
@@ -3655,51 +4712,48 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       );
     }
 
-    return Card(
-      elevation: 2,
-      clipBehavior: Clip.antiAlias,
+    return AdminCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-            color: AppColors.adminSurfaceElevated,
-            child: Row(children: [
-              const Icon(Icons.emoji_events, color: AppColors.adminPrimary, size: 20),
-              const SizedBox(width: 10),
-              const Text("Sluttspillsoversikt",
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: AppColors.adminText)),
-              const Spacer(),
-              TextButton.icon(
-                icon: const Icon(Icons.sync, size: 15, color: AppColors.adminPrimary),
-                label: const Text("Sync",
-                    style: TextStyle(color: AppColors.adminPrimary, fontSize: 12)),
-                onPressed: () async {
-                  await _resolvePendingMatches();
-                  _snack("Bracket synkronisert.");
-                },
-              ),
-            ]),
+          AdminCardHeader(
+            title: "Sluttspillsoversikt",
+            leading: const Icon(Icons.emoji_events_outlined, color: AppColors.adminPrimary, size: 20),
+            trailing: AdminButton(
+              label: "Sync",
+              icon: Icons.sync,
+              height: 36,
+              onPressed: () async {
+                await _resolvePendingMatches();
+                _snack("Bracket synkronisert.");
+              },
+            ),
           ),
           // Bracket-kolonner side om side
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: brackets
-                  .map((b) => Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                              right: b != brackets.last ? 16 : 0),
-                          child: bracketColumn(b),
-                        ),
-                      ))
-                  .toList(),
-            ),
+            child: LayoutBuilder(builder: (context, c) {
+              if (c.maxWidth < 520 && brackets.length > 1) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final b in brackets) ...[bracketColumn(b), const SizedBox(height: 12)],
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: brackets
+                    .map((b) => Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                                right: b != brackets.last ? 16 : 0),
+                            child: bracketColumn(b),
+                          ),
+                        ))
+                    .toList(),
+              );
+            }),
           ),
         ],
       ),
@@ -4441,4 +5495,4 @@ class _BracketPainterTopDown extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
+}

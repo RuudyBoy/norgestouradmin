@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'main.dart';
 import 'all_players_page.dart';
 import 'player_claims_page.dart';
 import 'theme/app_colors.dart';
+import 'theme/admin_ui.dart';
 import 'theme/responsive_layout.dart';
 
 /// Top-level navigation items supported by the Spike Dunk Admin Shell.
@@ -68,6 +70,10 @@ class AdminShell extends StatefulWidget {
   static AdminShellState? of(BuildContext context) =>
       context.findAncestorStateOfType<AdminShellState>();
 
+  /// Lar sider som er lagt oppå skallet (f.eks. turneringssiden med egen
+  /// sidemeny) be om å bytte hovedfane når de lukkes.
+  static final ValueNotifier<int?> navRequest = ValueNotifier<int?>(null);
+
   @override
   State<AdminShell> createState() => AdminShellState();
 }
@@ -82,6 +88,20 @@ class AdminShellState extends State<AdminShell> {
     super.initState();
     _selectedIndex = widget.initialIndex;
     _loadedIndices.add(_selectedIndex);
+    AdminShell.navRequest.addListener(_onNavRequest);
+  }
+
+  void _onNavRequest() {
+    final index = AdminShell.navRequest.value;
+    if (index == null) return;
+    AdminShell.navRequest.value = null;
+    setIndex(index);
+  }
+
+  @override
+  void dispose() {
+    AdminShell.navRequest.removeListener(_onNavRequest);
+    super.dispose();
   }
 
   /// Sets the currently active top-level destination index.
@@ -139,6 +159,7 @@ class AdminShellState extends State<AdminShell> {
             // Permanent desktop navigation sidebar
             AdminSidebar(
               selectedIndex: _selectedIndex,
+              showLiveCounts: !widget.testMode && widget.children == null && widget.bodyBuilder == null,
               onDestinationSelected: (index) {
                 if (index == 3) {
                   // Logg ut
@@ -151,7 +172,7 @@ class AdminShellState extends State<AdminShell> {
             const VerticalDivider(
               width: 1,
               thickness: 1,
-              color: Color(0x1AFFFFFF),
+              color: AppColors.adminSidebarBg,
             ),
             // Active page content
             Expanded(
@@ -173,23 +194,44 @@ class AdminSidebar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
 
+  /// Viser teller for ventende spillerkrav (leser `player_claims` med status
+  /// `pending`). Slås av i tester uten Firebase.
+  final bool showLiveCounts;
+
   const AdminSidebar({
     super.key,
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.showLiveCounts = false,
   });
+
+  Widget _claimsBadge() {
+    if (!showLiveCounts) return const SizedBox.shrink();
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('player_claims')
+          .where('status', isEqualTo: 'pending')
+          .snapshots(),
+      builder: (context, snap) {
+        final n = snap.hasData ? snap.data!.docs.length : 0;
+        if (n == 0) return const SizedBox.shrink();
+        return AdminPill.count('$n', background: AppColors.coral, foreground: AppColors.ink);
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: 260,
       color: AppColors.adminSidebarBg,
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Brand Header ──────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 20),
             child: Row(
               children: [
                 Container(
@@ -198,39 +240,26 @@ class AdminSidebar extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: AppColors.adminPrimary.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: Colors.transparent,
-                      width: 1,
-                    ),
                   ),
                   child: const Icon(
                     Icons.sports_volleyball,
-                    color: AppColors.adminPrimary,
-                    size: 24,
+                    color: AppColors.adminBrandIcon,
+                    size: 22,
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         'Spike Dunk',
-                        style: TextStyle(
-                          color: AppColors.adminSidebarText,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.2,
-                        ),
+                        style: AdminText.ui(size: 16, weight: FontWeight.w700, color: AppColors.adminSidebarText),
                       ),
                       Text(
-                        'Kontrollpanel',
-                        style: TextStyle(
-                          color: AppColors.adminSidebarTextSecondary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w400,
-                        ),
+                        'Admin · Norges Tour',
+                        style: AdminText.ui(size: 12, color: AppColors.adminSidebarTextSecondary),
                       ),
                     ],
                   ),
@@ -239,88 +268,59 @@ class AdminSidebar extends StatelessWidget {
             ),
           ),
 
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
-            child: Divider(
-              color: Color(0x1AFFFFFF),
-              height: 1,
-              thickness: 1,
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
           // ── Section Label ─────────────────────────────────────────
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             child: Text(
               'MENY',
-              style: TextStyle(
-                color: AppColors.adminSidebarTextSecondary,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.2,
-              ),
+              style: AdminText.kicker(color: AppColors.adminSidebarTextSecondary),
             ),
           ),
 
           // ── Navigation Destinations ───────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Column(
-              children: [
-                _SidebarTile(
-                  title: AdminNavDestination.tournaments.title,
-                  icon: selectedIndex == 0
-                      ? AdminNavDestination.tournaments.iconFilled
-                      : AdminNavDestination.tournaments.iconOutlined,
-                  isSelected: selectedIndex == 0,
-                  onTap: () => onDestinationSelected(0),
-                ),
-                const SizedBox(height: 4),
-                _SidebarTile(
-                  title: AdminNavDestination.players.title,
-                  icon: selectedIndex == 1
-                      ? AdminNavDestination.players.iconFilled
-                      : AdminNavDestination.players.iconOutlined,
-                  isSelected: selectedIndex == 1,
-                  onTap: () => onDestinationSelected(1),
-                ),
-                const SizedBox(height: 4),
-                _SidebarTile(
-                  title: AdminNavDestination.claims.title,
-                  icon: selectedIndex == 2
-                      ? AdminNavDestination.claims.iconFilled
-                      : AdminNavDestination.claims.iconOutlined,
-                  isSelected: selectedIndex == 2,
-                  onTap: () => onDestinationSelected(2),
-                ),
-              ],
-            ),
+          _SidebarTile(
+            title: AdminNavDestination.tournaments.title,
+            icon: selectedIndex == 0
+                ? AdminNavDestination.tournaments.iconFilled
+                : AdminNavDestination.tournaments.iconOutlined,
+            isSelected: selectedIndex == 0,
+            onTap: () => onDestinationSelected(0),
+          ),
+          const SizedBox(height: 4),
+          _SidebarTile(
+            title: AdminNavDestination.players.title,
+            icon: selectedIndex == 1
+                ? AdminNavDestination.players.iconFilled
+                : AdminNavDestination.players.iconOutlined,
+            isSelected: selectedIndex == 1,
+            onTap: () => onDestinationSelected(1),
+          ),
+          const SizedBox(height: 4),
+          _SidebarTile(
+            title: AdminNavDestination.claims.title,
+            icon: selectedIndex == 2
+                ? AdminNavDestination.claims.iconFilled
+                : AdminNavDestination.claims.iconOutlined,
+            isSelected: selectedIndex == 2,
+            onTap: () => onDestinationSelected(2),
+            trailing: _claimsBadge(),
           ),
 
           const Spacer(),
 
           // ── Bottom Logout Action ──────────────────────────────────
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
-            child: Divider(
-              color: Color(0x1AFFFFFF),
-              height: 1,
-              thickness: 1,
-            ),
+          Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            color: AppColors.adminSidebarDivider,
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: _SidebarTile(
-              title: 'Logg ut',
-              icon: Icons.logout,
-              isDestructive: true,
-              isSelected: false,
-              onTap: () => onDestinationSelected(3),
-            ),
+          _SidebarTile(
+            title: 'Logg ut',
+            icon: Icons.logout,
+            isDestructive: true,
+            isSelected: false,
+            onTap: () => onDestinationSelected(3),
           ),
-          const SizedBox(height: 8),
         ],
       ),
     );
@@ -334,6 +334,7 @@ class _SidebarTile extends StatefulWidget {
   final bool isSelected;
   final bool isDestructive;
   final VoidCallback onTap;
+  final Widget? trailing;
 
   const _SidebarTile({
     required this.title,
@@ -341,6 +342,7 @@ class _SidebarTile extends StatefulWidget {
     required this.isSelected,
     this.isDestructive = false,
     required this.onTap,
+    this.trailing,
   });
 
   @override
@@ -356,7 +358,7 @@ class _SidebarTileState extends State<_SidebarTile> {
     final Color bgColor;
 
     if (widget.isDestructive) {
-      itemColor = _isHovered ? const Color(0xFFF87171) : const Color(0xFFEF4444);
+      itemColor = _isHovered ? AppColors.adminDangerSidebarHover : AppColors.adminDangerSidebar;
       bgColor = _isHovered
           ? const Color(0xFFEF4444).withValues(alpha: 0.12)
           : Colors.transparent;
@@ -379,16 +381,11 @@ class _SidebarTileState extends State<_SidebarTile> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: bgColor,
             borderRadius: BorderRadius.circular(10),
-            border: widget.isSelected
-                ? Border.all(
-                    color: Colors.transparent,
-                    width: 1,
-                  )
-                : Border.all(color: Colors.transparent, width: 1),
           ),
           child: Row(
             children: [
@@ -397,15 +394,14 @@ class _SidebarTileState extends State<_SidebarTile> {
               Expanded(
                 child: Text(
                   widget.title,
-                  style: TextStyle(
+                  style: AdminText.ui(
+                    size: 15,
                     color: itemColor,
-                    fontSize: 14,
-                    fontWeight: widget.isSelected
-                        ? FontWeight.w700
-                        : FontWeight.w500,
+                    weight: widget.isSelected ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
               ),
+              if (widget.trailing != null) widget.trailing!,
             ],
           ),
         ),
@@ -464,6 +460,7 @@ class AdminDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     return Drawer(
       backgroundColor: AppColors.adminSidebarBg,
+      shape: const RoundedRectangleBorder(),
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
@@ -488,7 +485,7 @@ class AdminDrawer extends StatelessWidget {
                   ),
                   child: const Icon(
                     Icons.sports_volleyball,
-                    color: AppColors.adminPrimary,
+                    color: AppColors.adminBrandIcon,
                     size: 22,
                   ),
                 ),
@@ -591,15 +588,15 @@ class AdminDrawer extends StatelessWidget {
             onTap: () => _handleNavigation(context, 2),
           ),
 
-          const Divider(color: Color(0x1AFFFFFF)),
+          const Divider(color: AppColors.adminSidebarDivider),
 
           // ── Logg ut ───────────────────────────────────────────────
           ListTile(
-            leading: const Icon(Icons.logout, color: Color(0xFFEF4444)),
+            leading: const Icon(Icons.logout, color: AppColors.adminDangerSidebar),
             title: const Text(
               'Logg ut',
               style: TextStyle(
-                color: Color(0xFFEF4444),
+                color: AppColors.adminDangerSidebar,
                 fontWeight: FontWeight.w600,
               ),
             ),

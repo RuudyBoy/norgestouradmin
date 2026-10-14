@@ -1,20 +1,21 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'admin_shell.dart';
 import 'theme/app_colors.dart';
-import 'theme/responsive_layout.dart';
+import 'theme/admin_ui.dart';
 
-/// Responsive overview widget displaying KPI summary cards for the most recent tournaments.
+/// «Krever handling» – tre KPI-kort øverst på turneringsoversikten:
+///   1. Påmeldinger som venter (registrations.status == 'pending')
+///   2. Spillerkrav som venter (player_claims.status == 'pending')
+///   3. Nærmeste påmeldingsfrist blant turneringer med åpen påmelding
 ///
-/// Lays out tournament summary cards side-by-side in multi-column format on desktop,
-/// wraps across 2 columns on tablet, and gracefully collapses to single-column on mobile.
-/// Wrapped in [ResponsiveContainer.dashboard] to prevent stretching on ultrawide monitors.
+/// Kun lesing og visning – ingen skriving til databasen.
 class AdminDashboardOverview extends StatelessWidget {
-  /// Optional custom padding overriding standard responsive padding.
+  /// Optional custom padding.
   final EdgeInsetsGeometry? padding;
 
-  /// Whether to wrap the overview in [ResponsiveContainer.dashboard] to constrain max-width
-  /// and apply responsive edge padding. Defaults to `true`.
+  /// Beholdt for bakoverkompatibilitet (brukes ikke lenger til maks-bredde –
+  /// siden rundt styrer bredden).
   final bool wrapInContainer;
 
   /// Optional test tournaments for headless widget testing without Firebase dependencies.
@@ -23,306 +24,221 @@ class AdminDashboardOverview extends StatelessWidget {
   /// Optional flag indicating test mode to bypass live Firestore streams.
   final bool testMode;
 
+  /// Turneringene som allerede er lastet av siden (unngår dobbel henting).
+  final List<Map<String, dynamic>>? tournaments;
+
   const AdminDashboardOverview({
     super.key,
     this.padding,
     this.wrapInContainer = true,
     this.testTournaments,
     this.testMode = false,
+    this.tournaments,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (testTournaments != null || testMode) {
-      final tournaments = (testTournaments ?? const []).take(3).toList();
-      if (tournaments.isEmpty) {
-        return const SizedBox.shrink();
-      }
-      return _buildOverviewContent(context, tournaments);
+    final isTest = testTournaments != null || testMode;
+    final tours = tournaments ?? testTournaments ?? const <Map<String, dynamic>>[];
+
+    if (isTest) {
+      return _wrap(_buildCards(context, tours, const {}, 0));
     }
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('tournaments')
-          .orderBy('created_at', descending: true)
-          .limit(3)
-          .snapshots(),
-      builder: (context, tourSnapshot) {
-        if (!tourSnapshot.hasData || tourSnapshot.data!.docs.isEmpty) {
-          return const SizedBox.shrink();
-        }
-
-        final tournaments = tourSnapshot.data!.docs.map((tDoc) {
-          final tData = tDoc.data() as Map<String, dynamic>;
-          return {
-            'id': tDoc.id,
-            ...tData,
-          };
-        }).toList();
-
-        return _buildOverviewContent(context, tournaments);
-      },
-    );
-  }
-
-  Widget _buildOverviewContent(
-    BuildContext context,
-    List<Map<String, dynamic>> tournaments,
-  ) {
-    final Widget overviewContent = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          "Oversikt (Siste turneringer)",
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.adminText,
-          ),
-        ),
-        const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final availableWidth = constraints.maxWidth;
-            final isDesktop = Responsive.isDesktopOrLarger(context) || availableWidth >= 900.0;
-            final isTablet = (Responsive.isTablet(context) ||
-                    (availableWidth >= 550.0 && availableWidth < 900.0)) &&
-                !isDesktop;
-
-            const double spacing = 16.0;
-            const double runSpacing = 16.0;
-
-            final int columns;
-            if (isDesktop) {
-              columns = tournaments.length.clamp(1, 3);
-            } else if (isTablet) {
-              columns = tournaments.length == 1 ? 1 : 2;
-            } else {
-              columns = 1;
-            }
-
-            final double cardWidth;
-            if (columns == 1) {
-              if (isDesktop && availableWidth > 500) {
-                cardWidth = 440.0;
-              } else {
-                cardWidth = availableWidth;
-              }
-            } else {
-              // Subtract 0.1 to guard against floating-point rounding wrap in Wrap
-              final rawWidth =
-                  (availableWidth - (columns - 1) * spacing) / columns - 0.1;
-              cardWidth = rawWidth;
-            }
-
-            final effectiveCardWidth = math.max(0.0, cardWidth);
-
-            return Wrap(
-              spacing: spacing,
-              runSpacing: runSpacing,
-              children: tournaments.map((tData) {
-                final tId = tData['id'] as String? ?? '';
-                final tName = tData['name'] as String? ?? 'Ukjent';
-
-                return SizedBox(
-                  width: effectiveCardWidth,
-                  child: _TournamentStatCard(
-                    tournamentId: tId,
-                    tournamentName: tName,
-                    tournamentData: tData,
-                    testMode: testMode,
-                  ),
-                );
-              }).toList(),
-            );
-          },
-        ),
-        const Divider(height: 32, thickness: 1, color: Colors.white24),
-        const Text(
-          "Alle turneringer",
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.adminText,
-          ),
-        ),
-        const SizedBox(height: 8),
-      ],
-    );
-
-    if (wrapInContainer) {
-      return ResponsiveContainer.dashboard(
-        padding: padding,
-        child: overviewContent,
+    if (tournaments == null) {
+      return StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('tournaments').snapshots(),
+        builder: (context, snap) {
+          final list = snap.hasData
+              ? snap.data!.docs.map((d) => {'id': d.id, ...(d.data() as Map<String, dynamic>)}).toList()
+              : <Map<String, dynamic>>[];
+          return _withLiveCounts(context, list);
+        },
       );
     }
-
-    return Padding(
-      padding: padding ??
-          EdgeInsets.symmetric(
-            horizontal: Responsive.contentPadding(context),
-            vertical: 12.0,
-          ),
-      child: overviewContent,
-    );
-  }
-}
-
-class _TournamentStatCard extends StatelessWidget {
-  final String tournamentId;
-  final String tournamentName;
-  final Map<String, dynamic> tournamentData;
-  final bool testMode;
-
-  const _TournamentStatCard({
-    required this.tournamentId,
-    required this.tournamentName,
-    required this.tournamentData,
-    this.testMode = false,
-  });
-
-  String _shortDate(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return '–';
-    final parts = dateStr.split('.');
-    if (parts.length >= 2) return '${parts[0]}.${parts[1]}';
-    return dateStr;
+    return _withLiveCounts(context, tours);
   }
 
-  Widget _buildCardContent(BuildContext context, int teamCount, bool isLoading) {
-    final deadline = tournamentData['registration_deadline'] as String?;
-    final regStatus =
-        tournamentData['registration_status'] as String? ?? 'open';
-    final isOpen = regStatus == 'open';
+  Widget _wrap(Widget child) => padding == null ? child : Padding(padding: padding!, child: child);
 
-    return Card(
-      elevation: 3,
-      margin: EdgeInsets.zero,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: AppColors.adminSurface,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              tournamentName,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: AppColors.adminText,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 10),
-            if (isLoading)
-              const SizedBox(
-                height: 44,
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              )
-            else
-              Row(
-                children: [
-                  Expanded(
-                    child: _StatColumn(
-                      label: "Lag",
-                      value: teamCount.toString(),
-                      color: AppColors.adminText,
-                    ),
-                  ),
-                  Expanded(
-                    child: _StatColumn(
-                      label: "Frist",
-                      value: _shortDate(deadline),
-                      color: Colors.orange,
-                    ),
-                  ),
-                  Expanded(
-                    child: _StatColumn(
-                      label: "Påmelding",
-                      value: isOpen ? "Åpen" : "Stengt",
-                      color: AppColors.adminText,
-                    ),
-                  ),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (testMode || tournamentData.containsKey('team_count')) {
-      final teamCount = tournamentData['team_count'] as int? ?? 0;
-      return _buildCardContent(context, teamCount, false);
-    }
-
+  Widget _withLiveCounts(BuildContext context, List<Map<String, dynamic>> tours) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('teams')
-          .where('tournament_id', isEqualTo: tournamentId)
+          .collection('registrations')
+          .where('status', isEqualTo: 'pending')
           .snapshots(),
-      builder: (context, teamsSnap) {
-        final teamCount = teamsSnap.hasData ? teamsSnap.data!.docs.length : 0;
-        return _buildCardContent(context, teamCount, !teamsSnap.hasData);
+      builder: (context, regSnap) {
+        final pendingByTournament = <String, int>{};
+        if (regSnap.hasData) {
+          for (final d in regSnap.data!.docs) {
+            final tid = (d.data() as Map<String, dynamic>)['tournament_id'] as String? ?? '';
+            pendingByTournament[tid] = (pendingByTournament[tid] ?? 0) + 1;
+          }
+        }
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('player_claims')
+              .where('status', isEqualTo: 'pending')
+              .snapshots(),
+          builder: (context, claimSnap) {
+            final claims = claimSnap.hasData ? claimSnap.data!.docs.length : 0;
+            return _wrap(_buildCards(context, tours, pendingByTournament, claims));
+          },
+        );
+      },
+    );
+  }
+
+  static DateTime? _parse(String? s) {
+    if (s == null) return null;
+    final p = s.split('.');
+    if (p.length != 3) return null;
+    final d = int.tryParse(p[0]);
+    final m = int.tryParse(p[1]);
+    final y = int.tryParse(p[2]);
+    if (d == null || m == null || y == null) return null;
+    return DateTime(y, m, d);
+  }
+
+  static String _short(String? s) {
+    if (s == null || s.isEmpty) return '–';
+    final parts = s.split('.');
+    if (parts.length >= 2) return '${parts[0]}.${parts[1]}';
+    return s;
+  }
+
+  Widget _buildCards(
+    BuildContext context,
+    List<Map<String, dynamic>> tours,
+    Map<String, int> pendingByTournament,
+    int pendingClaims,
+  ) {
+    // 1 – påmeldinger
+    final nameById = {for (final t in tours) (t['id'] as String? ?? ''): (t['name'] as String? ?? 'Ukjent')};
+    final pendingTotal = pendingByTournament.values.fold<int>(0, (a, b) => a + b);
+    final pendingNames = pendingByTournament.keys
+        .where((id) => nameById.containsKey(id))
+        .map((id) => nameById[id]!)
+        .toList();
+    String regSub;
+    if (pendingTotal == 0) {
+      regSub = 'Ingen ventende påmeldinger';
+    } else if (pendingNames.length <= 2) {
+      regSub = pendingNames.isEmpty ? 'Venter på godkjenning' : pendingNames.join(' · ');
+    } else {
+      regSub = '${pendingNames.take(2).join(' · ')} +${pendingNames.length - 2}';
+    }
+
+    // 3 – nærmeste frist
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    Map<String, dynamic>? nearest;
+    DateTime? nearestDate;
+    for (final t in tours) {
+      if ((t['registration_status'] as String? ?? 'open') != 'open') continue;
+      final dl = _parse(t['registration_deadline'] as String?);
+      if (dl == null || dl.isBefore(today)) continue;
+      if (nearestDate == null || dl.isBefore(nearestDate)) {
+        nearestDate = dl;
+        nearest = t;
+      }
+    }
+    String dlTitle;
+    String dlSub;
+    if (nearest == null || nearestDate == null) {
+      dlTitle = 'Ingen åpne frister';
+      dlSub = 'Ingen turneringer med åpen påmelding';
+    } else {
+      final days = nearestDate.difference(today).inDays;
+      dlTitle = days == 0
+          ? 'Frist i dag'
+          : days == 1
+              ? 'Frist i morgen'
+              : 'Frist om $days dager';
+      dlSub = '${nearest['name'] ?? 'Ukjent'} · Frist ${_short(nearest['registration_deadline'] as String?)}';
+    }
+
+    final cards = <Widget>[
+      _KpiCard(
+        icon: Icons.how_to_reg_outlined,
+        title: pendingTotal == 1 ? '1 påmelding venter' : '$pendingTotal påmeldinger venter',
+        subtitle: regSub,
+      ),
+      _KpiCard(
+        icon: Icons.assignment_ind_outlined,
+        title: pendingClaims == 1 ? '1 spillerkrav venter' : '$pendingClaims spillerkrav venter',
+        subtitle: pendingClaims == 0 ? 'Ingen ventende krav' : 'Venter på godkjenning',
+        onTap: testMode ? null : () => AdminShell.of(context)?.setIndex(2),
+      ),
+      _KpiCard(
+        icon: Icons.schedule,
+        title: dlTitle,
+        subtitle: dlSub,
+        iconBg: AppColors.adminWarningBg,
+        iconFg: AppColors.adminWarning,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 12.0;
+        final w = constraints.maxWidth;
+        final cols = w >= 800 ? 3 : (w >= 520 ? 2 : 1);
+        final cardW = cols == 1 ? w : (w - gap * (cols - 1)) / cols - 0.1;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [for (final c in cards) SizedBox(width: cardW, child: c)],
+        );
       },
     );
   }
 }
 
-class _StatColumn extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
+class _KpiCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  final Color iconBg;
+  final Color iconFg;
 
-  const _StatColumn({
-    required this.label,
-    required this.value,
-    required this.color,
+  const _KpiCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+    this.iconBg = AppColors.adminInfoBg,
+    this.iconFg = AppColors.adminPrimary,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            value,
-            maxLines: 1,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: color,
+    return AdminCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          AdminIconTile(icon: icon, background: iconBg, foreground: iconFg),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title,
+                    style: AdminText.ui(size: 15, weight: FontWeight.w700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                Text(subtitle,
+                    style: AdminText.ui(size: 13, color: AppColors.adminTextSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ],
             ),
           ),
-        ),
-        const SizedBox(height: 2),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            label,
-            maxLines: 1,
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppColors.adminTextSecondary,
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

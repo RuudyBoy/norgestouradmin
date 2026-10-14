@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme/admin_ui.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_text_styles.dart';
 import 'theme/responsive_layout.dart';
@@ -505,7 +506,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
   }
 
   Widget _section(String title) => Text(title,
-      style: AppText.dispH2().copyWith(color: AppColors.adminTextSecondary));
+      style: AdminText.ui(size: 16, weight: FontWeight.w700));
 
   Widget _field(TextEditingController ctrl, String label, IconData icon) =>
       TextField(
@@ -622,7 +623,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                   margin: const EdgeInsets.only(bottom: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
-                    side: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                    side: const BorderSide(color: AppColors.adminOutline),
                   ),
                   elevation: 0,
                   child: Padding(
@@ -670,7 +671,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                               },
                             ),
                             if (selectedStart != null)
-                              IconButton(icon: const Icon(Icons.clear, color: Colors.red), onPressed: () async {
+                              IconButton(icon: const Icon(Icons.clear, color: AppColors.adminDanger), onPressed: () async {
                                 rt.remove('1');
                                 await cat.reference.update({'round_start_times': rt});
                               }),

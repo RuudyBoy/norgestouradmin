@@ -257,7 +257,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
+            icon: const Icon(Icons.delete_forever, color: AppColors.adminDanger),
             tooltip: "Slett alle spillere (Test)",
             onPressed: () async {
               final ok = await showDialog<bool>(
@@ -268,7 +268,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Avbryt")),
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.adminDanger, foregroundColor: Colors.white),
                       onPressed: () => Navigator.pop(ctx, true),
                       child: const Text("Slett alt"),
                     ),
@@ -384,4 +384,4 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
       ),
     );
   }
-}
+}
