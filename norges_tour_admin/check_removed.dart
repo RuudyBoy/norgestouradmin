@@ -8,7 +8,7 @@ void main() {
     var removed = match.group(0)!;
     int open = removed.split('{').length - 1;
     int close = removed.split('}').length - 1;
-    print("removed balance: " + (open - close).toString());
+    print("removed balance: ${open - close}");
   } else {
     print("Not found");
   }

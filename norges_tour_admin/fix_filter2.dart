@@ -44,7 +44,7 @@ void main() {
   int s = text.indexOf("  Widget _buildTeamsTab() {");
   int e = text.indexOf("  Widget _buildTeamsTabForCategory(String categoryId, String? categoryName) {");
   if (s != -1 && e != -1) {
-    text = text.replaceRange(s, e, newTeamsTab + "\n");
+    text = text.replaceRange(s, e, "$newTeamsTab\n");
     print("TeamsTab updated.");
   }
   

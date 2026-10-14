@@ -1,5 +1,4 @@
-﻿import 'dart:io';
-void main() {
+﻿void main() {
   var newCard = """  Widget _buildScheduleCard(DocumentSnapshot matchDoc, Map<String, int> matchNumById, Map<String, String> catIdToName) {
     final d = matchDoc.data() as Map<String, dynamic>;
     final matchNum = matchNumById[matchDoc.id] ?? (d['match_number'] as int?);

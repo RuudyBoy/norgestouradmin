@@ -174,5 +174,5 @@ void main() {
   
   int open = newCard.split('{').length - 1;
   int close = newCard.split('}').length - 1;
-  print("newCard balance: " + (open - close).toString());
+  print("newCard balance: ${open - close}");
 }

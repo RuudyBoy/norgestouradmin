@@ -44,7 +44,7 @@ void main() {
   int s = text.indexOf("  Widget _buildOppsettSection() {");
   int e = text.indexOf("  Widget _buildOppsettSectionForCategory(String categoryId, String? categoryName) {");
   if (s != -1 && e != -1) {
-    text = text.replaceRange(s, e, newOppsettSection + "\n");
+    text = text.replaceRange(s, e, "$newOppsettSection\n");
     print("OppsettSection updated.");
   }
   
