@@ -49,7 +49,7 @@ firestore.rules            Sikkerhetsregler for databasen
 
 ## Teknologi
 
-Flutter og Dart · Firebase Auth · Cloud Firestore · Cloud Functions (Node 20, TypeScript) · Firebase Storage · qr_flutter
+Flutter og Dart · Firebase Auth · Cloud Firestore · Cloud Functions (Node 20, TypeScript) · qr_flutter
 
 ## Kjør lokalt
 
