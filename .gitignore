@@ -1,0 +1,11 @@
+# Lokale verktøy og AI-agenter
+.claude/
+.agents/
+
+# Firebase Functions
+functions/node_modules/
+functions/lib/
+
+# Firebase
+firebase-debug.log
+.firebase/
