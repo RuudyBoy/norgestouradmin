@@ -405,8 +405,10 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
               const Divider(),
               const SizedBox(height: 16),
 
-              // ─── KAPASITET ─────────────────────────────────────────────
+              // ─── BANE- OG TIDSOPPSETT PER KLASSE ───────────────────────
               _buildCategoryScheduleSection(),
+
+              // ─── KAPASITET ─────────────────────────────────────────────
               _section("Kapasitet"),
               const SizedBox(height: 12),
               TextField(

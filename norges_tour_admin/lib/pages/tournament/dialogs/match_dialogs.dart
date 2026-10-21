@@ -3,7 +3,7 @@ part of '../tournament_control_page.dart';
 // Dialoger for kamper: rediger kamp/resultat, walkover, bytt lag og dommer-QR.
 extension _MatchDialogs on _TournamentControlPageState {
   void _showQrDialog(String matchId, String a, String b) {
-    final url = "https://spikedunk.web.app/?matchId=$matchId";
+    final url = "$kRefereeAppUrl?matchId=$matchId";
     showDialog(context: context, builder: (ctx) => AlertDialog(
       title: const Text("Dommer QR-kode"),
       content: Column(mainAxisSize: MainAxisSize.min, children: [

@@ -79,6 +79,6 @@ npm run deploy
 
 ## Status
 
-Fungerende prototype, testet med demoturneringer. Ikke klar for ekte brukere ennå. Neste steg er strammere Firestore-regler, at all avansement-logikk ligger i Cloud Functions, en ryddigere kobling mellom bruker og spiller, og å dele opp `tournament_control_page.dart`.
+Fungerende prototype, testet med demoturneringer. Ikke klar for ekte brukere ennå. Neste steg er strammere Firestore-regler, at all avansement-logikk ligger i Cloud Functions og en ryddigere kobling mellom bruker og spiller.
 
 Laget av Christian Jørgensen Ruud.

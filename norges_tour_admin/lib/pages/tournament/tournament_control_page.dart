@@ -24,6 +24,13 @@ part 'tabs/schedule_tab.dart';
 part 'tabs/setup_tab.dart';
 part 'tabs/teams_tab.dart';
 
+/// Lag-id i en kamp der laget ikke er kjent ennå (f.eks. «Vinner kamp 105»).
+/// Samme verdi brukes av Cloud Function `matchRunner` – må ikke endres.
+const kPlaceholder = 'placeholder';
+
+/// Dommerappen (livescore). QR-koden åpner `<url>?matchId=<id>`.
+const kRefereeAppUrl = 'https://spikedunk.web.app/';
+
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
   final String tournamentName;
@@ -58,7 +65,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
   Set<String> _knownFinishedIds = {};
   bool _listenerReady = false;
 
-  // NavigationRail-indeks: 0=Oversikt 1=Kampprogram 2=Oppsett 3=Lag
+  // Valgt fane: 0=Oversikt 1=Kampprogram 2=Oppsett 3=Lag
   int _selectedNavIndex = 2;
 
   // Seeding-bytte: lagrer det valgte laget (første klikk)
@@ -150,12 +157,14 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     return q;
   }
 
-  // ─── Sluttspill – visual bracket ──────────────────────────────────────────
+  // ─── Visningshjelpere ─────────────────────────────────────────────────────
 
+  /// Lagnavn som vises for en kamp-side. Ukjente lag vises som
+  /// «Vinner kamp N» / «Taper kamp N» når kildekampen har et kampnummer.
   String _resolveTeamDisplayName(Map<String, dynamic> d, String prefix, Map<String, int> matchNumById) {
     final id = d['${prefix}_id'] as String? ?? '';
     final name = d['${prefix}_name'] as String? ?? 'TBD';
-    if (id != 'placeholder') return name;
+    if (id != kPlaceholder) return name;
     final fromMatchId = d['${prefix}_from_match_id'] as String?;
     final fromSlot = d['${prefix}_from_slot'] as String?;
     if (fromMatchId != null && fromSlot != null) {

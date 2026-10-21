@@ -370,7 +370,7 @@ class _AllPlayersPageState extends State<AllPlayersPage> {
                         IconButton(
                           icon: const Icon(Icons.delete, color: AppColors.adminTextSecondary),
                           onPressed: () {
-                             FirebaseFirestore.instance.collection('players').doc(docId).delete();
+                            FirebaseFirestore.instance.collection('players').doc(docId).delete();
                           },
                         ),
                       ],

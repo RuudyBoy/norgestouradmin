@@ -887,8 +887,8 @@ extension _SetupTab on _TournamentControlPageState {
         final isFinished = status == 'finished';
         final isLive     = status == 'live';
         final isPending  = status == 'pending' ||
-            (d['team_a_id'] as String? ?? '') == 'placeholder' ||
-            (d['team_b_id'] as String? ?? '') == 'placeholder';
+            (d['team_a_id'] as String? ?? '') == kPlaceholder ||
+            (d['team_b_id'] as String? ?? '') == kPlaceholder;
         final num      = d['match_number'] as int?;
         final teamA    = _resolveTeamDisplayName(d, 'team_a', matchNumById);
         final teamB    = _resolveTeamDisplayName(d, 'team_b', matchNumById);

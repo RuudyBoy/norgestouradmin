@@ -30,7 +30,7 @@ extension _Generation on _TournamentControlPageState {
     };
   }
 
-  // ─── HOVEDNØKKEL: Generer hele turneringen på én gang ─────────────────────
+  // ─── Generer hele klassen på én gang ──────────────────────────────────────
   //
   // Trykk én gang → grupper + runde 2 + sluttspill opprettes med én gang.
   // Runde 2-kamper og sluttspillkamper starter som "pending" (lagene er
@@ -70,6 +70,9 @@ extension _Generation on _TournamentControlPageState {
       return;
     }
 
+    // Serpentine i blokker på 16 lag (NVBF vedlegg 3): seed 1–16 fordeles på
+    // pulje A–D, seed 17–32 på pulje E–H osv. Annenhver rad går motsatt vei:
+    // A B C D / D C B A / A B C D …
     final groupLists = List.generate(numGroups, (_) => <DocumentSnapshot>[]);
     for (int i = 0; i < sorted.length; i++) {
       final divIdx = i ~/ 16;
@@ -211,12 +214,12 @@ extension _Generation on _TournamentControlPageState {
     'current_set': 1, 'past_sets': [],
     // Team A – placeholder
     'team_a_name': teamAPlaceholder,
-    'team_a_id': 'placeholder',
+    'team_a_id': kPlaceholder,
     'team_a_from_match_id': teamAFromMatchId,
     'team_a_from_slot': teamAFromSlot,
     // Team B – placeholder
     'team_b_name': teamBPlaceholder,
-    'team_b_id': 'placeholder',
+    'team_b_id': kPlaceholder,
     'team_b_from_match_id': teamBFromMatchId,
     'team_b_from_slot': teamBFromSlot,
   };
@@ -234,7 +237,7 @@ extension _Generation on _TournamentControlPageState {
       final labels = ['1. plass', '2. plass', '3. plass', '4. plass'];
       return {
         '${prefix}_name': '${labels[place - 1]} Pulje $group',
-        '${prefix}_id': 'placeholder',
+        '${prefix}_id': kPlaceholder,
         '${prefix}_from_group': group,
         '${prefix}_from_place': place,
       };
@@ -242,14 +245,14 @@ extension _Generation on _TournamentControlPageState {
 
     Map<String, dynamic> winnerSlot(String prefix, String fromMatchId) => {
       '${prefix}_name': 'Vinner',
-      '${prefix}_id': 'placeholder',
+      '${prefix}_id': kPlaceholder,
       '${prefix}_from_match_id': fromMatchId,
       '${prefix}_from_slot': 'winner',
     };
 
     Map<String, dynamic> loserSlot(String prefix, String fromMatchId, String label) => {
       '${prefix}_name': label,
-      '${prefix}_id': 'placeholder',
+      '${prefix}_id': kPlaceholder,
       '${prefix}_from_match_id': fromMatchId,
       '${prefix}_from_slot': 'loser',
     };
