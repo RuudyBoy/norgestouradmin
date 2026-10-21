@@ -310,7 +310,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
             AdminDashboardOverview(
               testTournaments: widget.testTournaments,
               testMode: widget.testMode,
-              wrapInContainer: false,
               tournaments: _isTest ? null : items,
             ),
             const SizedBox(height: 24),

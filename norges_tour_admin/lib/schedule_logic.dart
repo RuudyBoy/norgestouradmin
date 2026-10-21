@@ -12,20 +12,6 @@ class CategorySchedule {
 
   const CategorySchedule({this.courts = const [], this.roundTimes = const {}});
 
-  /// Nøkler for alle rundene i hele turneringen (gruppespill + sluttspill).
-  static const roundKeys = ['1', '2', '3', 'omspill', 'r16', 'r8', 'qf', 'sf', 'final'];
-  static const roundLabels = {
-    '1': 'Gruppe runde 1',
-    '2': 'Gruppe runde 2',
-    '3': 'Gruppe runde 3',
-    'omspill': 'Omspill',
-    'r16': '1/16-finale',
-    'r8': '1/8-finale',
-    'qf': 'Kvartfinale',
-    'sf': 'Semifinale',
-    'final': 'Finale',
-  };
-
   /// Rundenøkkel som hører til `matchRoundOrder`.
   static String? keyForOrder(int order) {
     if (order >= 1 && order <= 3) return '$order';
@@ -48,17 +34,6 @@ class CategorySchedule {
     }
     return CategorySchedule(courts: courts..sort(), roundTimes: times);
   }
-
-  Map<String, dynamic> toMap() => {
-        'court_numbers': courts,
-        'round_start_times': roundTimes,
-      };
-
-  CategorySchedule copyWith({List<int>? courts, Map<String, String>? roundTimes}) =>
-      CategorySchedule(
-        courts: courts ?? this.courts,
-        roundTimes: roundTimes ?? this.roundTimes,
-      );
 }
 
 int? parseHm(String? s) {
@@ -275,25 +250,3 @@ Future<void> autoScheduleTournament({
 
   await batch.commit();
 }
-
-/// Planlegger kun én klasse (brukes f.eks. ved manuell re-schedule).
-/// Kaller den globale scheduleren for bare den klassen.
-Future<void> autoScheduleCategory({
-  required String tournamentId,
-  required String categoryId,
-  required int startMinutes,
-  required int matchDurationMinutes,
-  required int courtsCount,
-  required String startDate,
-  required String endDate,
-  int breakBetweenRounds = 5,
-}) => autoScheduleTournament(
-      tournamentId: tournamentId,
-      startMinutes: startMinutes,
-      matchDurationMinutes: matchDurationMinutes,
-      courtsCount: courtsCount,
-      startDate: startDate,
-      endDate: endDate,
-      breakBetweenRounds: breakBetweenRounds,
-      interleaveRounds: 0,
-    );

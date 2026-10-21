@@ -6,13 +6,11 @@ import 'theme/responsive_layout.dart';
 class RegistrationsPage extends StatefulWidget {
   final String tournamentId;
   final String tournamentName;
-  final String tournamentType;
 
   const RegistrationsPage({
     super.key,
     required this.tournamentId,
     required this.tournamentName,
-    required this.tournamentType,
   });
 
   @override
@@ -22,8 +20,6 @@ class RegistrationsPage extends StatefulWidget {
 class _RegistrationsPageState extends State<RegistrationsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-
-  String? _selectedCategoryName;
 
   // Filter
   String _statusFilter = 'all'; // all | pending | accepted | waitlist | rejected
@@ -153,7 +149,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text("Seeding-preview – ${_selectedCategoryName ?? 'Alle'}"),
+        title: Text("Seeding-preview – Alle"),
         content: SizedBox(
           width: 400,
           child: accepted.isEmpty
@@ -382,7 +378,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
                           // Finn seed-nummer (kun blant godkjente, sortert)
                           final doc = filtered[i];
                           final data = doc.data() as Map<String, dynamic>;
-                          return _buildRegistrationCard(doc, data, i, all);
+                          return _buildRegistrationCard(doc, data, all);
                         },
                       ),
                     ),
@@ -421,7 +417,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
   }
 
   Widget _buildRegistrationCard(DocumentSnapshot doc,
-      Map<String, dynamic> data, int index, List<DocumentSnapshot> all) {
+      Map<String, dynamic> data, List<DocumentSnapshot> all) {
     final status = data['status'] as String? ?? 'pending';
     final p1 = data['player1_name'] ?? '';
     final p2 = data['player2_name'] ?? '';
@@ -726,7 +722,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
             else
               ...docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
-                return _buildRegistrationCard(doc, data, 0, docs);
+                return _buildRegistrationCard(doc, data, docs);
               }),
             const SizedBox(height: 8),
           ],

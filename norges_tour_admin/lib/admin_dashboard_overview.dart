@@ -14,10 +14,6 @@ class AdminDashboardOverview extends StatelessWidget {
   /// Optional custom padding.
   final EdgeInsetsGeometry? padding;
 
-  /// Beholdt for bakoverkompatibilitet (brukes ikke lenger til maks-bredde –
-  /// siden rundt styrer bredden).
-  final bool wrapInContainer;
-
   /// Optional test tournaments for headless widget testing without Firebase dependencies.
   final List<Map<String, dynamic>>? testTournaments;
 
@@ -30,7 +26,6 @@ class AdminDashboardOverview extends StatelessWidget {
   const AdminDashboardOverview({
     super.key,
     this.padding,
-    this.wrapInContainer = true,
     this.testTournaments,
     this.testMode = false,
     this.tournaments,

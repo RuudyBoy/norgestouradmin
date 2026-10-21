@@ -87,12 +87,6 @@ abstract final class ResponsiveLayout {
   static bool isTabletOrLarger(BuildContext context) =>
       MediaQuery.sizeOf(context).width >= mobileBreakpoint;
 
-  /// Returns `true` if current viewport width is strictly less than 1000px (mobile or tablet).
-  ///
-  /// Recommended when deciding whether to show an AppBar drawer or bottom bar.
-  static bool isTabletOrSmaller(BuildContext context) =>
-      MediaQuery.sizeOf(context).width < tabletBreakpoint;
-
   // ── Query Methods (via raw width / BoxConstraints) ─────────────────────────
   /// Returns `true` if the given [width] is strictly less than 600px.
   static bool isMobileWidth(double width) => width < mobileBreakpoint;
@@ -136,16 +130,6 @@ abstract final class ResponsiveLayout {
     return desktopPadding;
   }
 
-  /// Returns an [EdgeInsets] with responsive horizontal padding and the specified [vertical] padding.
-  static EdgeInsets contentPaddingInsets(
-    BuildContext context, {
-    double vertical = 16.0,
-  }) {
-    return EdgeInsets.symmetric(
-      horizontal: contentPadding(context),
-      vertical: vertical,
-    );
-  }
 
   // ── Value Selector Helpers ─────────────────────────────────────────────────
   /// Selects a responsive value based on the current viewport width.
@@ -253,7 +237,6 @@ abstract final class Responsive {
   static bool isUltrawide(BuildContext context) => ResponsiveLayout.isUltrawide(context);
   static bool isDesktopOrLarger(BuildContext context) => ResponsiveLayout.isDesktopOrLarger(context);
   static bool isTabletOrLarger(BuildContext context) => ResponsiveLayout.isTabletOrLarger(context);
-  static bool isTabletOrSmaller(BuildContext context) => ResponsiveLayout.isTabletOrSmaller(context);
 
   // Query Methods (Width)
   static bool isMobileWidth(double width) => ResponsiveLayout.isMobileWidth(width);
@@ -266,8 +249,6 @@ abstract final class Responsive {
   static ResponsiveBreakpoint getBreakpoint(BuildContext context) => ResponsiveLayout.getBreakpoint(context);
   static ResponsiveBreakpoint getBreakpointFromWidth(double width) => ResponsiveLayout.getBreakpointFromWidth(width);
   static double contentPadding(BuildContext context) => ResponsiveLayout.contentPadding(context);
-  static EdgeInsets contentPaddingInsets(BuildContext context, {double vertical = 16.0}) =>
-      ResponsiveLayout.contentPaddingInsets(context, vertical: vertical);
 
   // Value Selectors
   static T value<T>(

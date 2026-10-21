@@ -218,7 +218,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
   Future<void> _showCategoryAdmin() async {
     showDialog(
       context: context,
-      builder: (ctx) => _CategoryAdminDialog(tournamentId: widget.tournamentId, courtsCount: _courtsCount),
+      builder: (ctx) => _CategoryAdminDialog(tournamentId: widget.tournamentId),
     );
   }
 
@@ -696,8 +696,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
 // ─── Dialog: Administrer klasser ─────────────────────────────────────────────
 class _CategoryAdminDialog extends StatelessWidget {
   final String tournamentId;
-  final int courtsCount;
-  const _CategoryAdminDialog({required this.tournamentId, required this.courtsCount});
+  const _CategoryAdminDialog({required this.tournamentId});
 
   @override
   Widget build(BuildContext context) {
