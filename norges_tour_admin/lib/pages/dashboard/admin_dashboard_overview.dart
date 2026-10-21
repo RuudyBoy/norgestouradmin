@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'admin_shell.dart';
-import 'theme/app_colors.dart';
-import 'theme/admin_ui.dart';
-import 'utils/format.dart';
+import 'package:norges_tour_admin/widgets/admin_shell.dart';
+import 'package:norges_tour_admin/theme/app_colors.dart';
+import 'package:norges_tour_admin/theme/admin_ui.dart';
+import 'package:norges_tour_admin/utils/format.dart';
 
 /// «Krever handling» – tre KPI-kort øverst på turneringsoversikten:
 ///   1. Påmeldinger som venter (registrations.status == 'pending')

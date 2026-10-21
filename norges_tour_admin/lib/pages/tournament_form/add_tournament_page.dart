@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'theme/admin_ui.dart';
-import 'theme/app_colors.dart';
-import 'theme/app_text_styles.dart';
-import 'theme/responsive_layout.dart';
-import 'utils/format.dart';
+import 'package:norges_tour_admin/theme/admin_ui.dart';
+import 'package:norges_tour_admin/theme/app_colors.dart';
+import 'package:norges_tour_admin/theme/app_text_styles.dart';
+import 'package:norges_tour_admin/theme/responsive_layout.dart';
+import 'package:norges_tour_admin/utils/format.dart';
 
 // ─── Turneringstyper med metadata ──────────────────────────────────────────
 class TournamentTypeConfig {

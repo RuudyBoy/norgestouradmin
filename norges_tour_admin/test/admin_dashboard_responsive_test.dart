@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:norges_tour_admin/main.dart';
-import 'package:norges_tour_admin/admin_dashboard_overview.dart';
+import 'package:norges_tour_admin/pages/dashboard/dashboard_page.dart';
+import 'package:norges_tour_admin/pages/dashboard/admin_dashboard_overview.dart';
 
 void main() {
   setUp(() {

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'admin_shell.dart';
-import 'theme/app_colors.dart';
-import 'theme/responsive_layout.dart';
+import 'package:norges_tour_admin/widgets/admin_shell.dart';
+import 'package:norges_tour_admin/theme/app_colors.dart';
+import 'package:norges_tour_admin/theme/responsive_layout.dart';
 
 class PlayerClaimsPage extends StatelessWidget {
   const PlayerClaimsPage({super.key});

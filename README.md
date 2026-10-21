@@ -36,11 +36,19 @@ Hvert sluttspill er en lenket graf: hver kamp har `next_match_id` og `next_match
 ```
 norges_tour_admin/         Flutter-appen (web/desktop)
   lib/
-    main.dart                    Oversikt og innlogging
-    tournament_control_page.dart Turneringskontroll: lag, seeding, puljer, sluttspill, kampprogram
-    schedule_logic.dart          Automatisk bane- og tidsoppsett
-    registrations_page.dart      Påmeldinger
-    player_claims_page.dart      Godkjenning av spillerprofiler
+    main.dart                    Oppstart og innlogging (AuthGate)
+    widgets/admin_shell.dart     Sidemeny og navigasjon
+    pages/
+      dashboard/                 Turneringsoversikten og «Krever handling»-kortene
+      tournament/                Turneringskontroll: lag, seeding, puljer, sluttspill, kampprogram
+        tabs/                    Én fil per fane (oversikt, kampprogram, oppsett, lag)
+        dialogs/                 Dialoger for kamper og lag
+      tournament_form/           Opprett og rediger turnering
+      registrations_page.dart    Påmeldinger
+      all_players_page.dart      Spillerdatabase
+      player_claims_page.dart    Godkjenning av spillerprofiler
+    logic/schedule_logic.dart    Automatisk bane- og tidsoppsett
+    utils/format.dart            Felles formatering av dato, tid og resultat
     theme/                       Farger, typografi og tema (designsystem)
   test/                    Widgettester for responsiv layout
 functions/src/index.ts     Cloud Function matchRunner (TypeScript)

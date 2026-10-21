@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:norges_tour_admin/theme/responsive_layout.dart';
-import 'package:norges_tour_admin/admin_shell.dart';
+import 'package:norges_tour_admin/widgets/admin_shell.dart';
 
 void main() {
   group('Adversarial Resolution Boundary Checks', () {

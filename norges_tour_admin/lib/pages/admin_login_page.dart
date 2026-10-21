@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'theme/app_text_styles.dart';
-import 'theme/admin_ui.dart';
-import 'theme/app_colors.dart';
+import 'package:norges_tour_admin/theme/app_text_styles.dart';
+import 'package:norges_tour_admin/theme/admin_ui.dart';
+import 'package:norges_tour_admin/theme/app_colors.dart';
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});

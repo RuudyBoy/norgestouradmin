@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'main.dart';
-import 'all_players_page.dart';
-import 'player_claims_page.dart';
-import 'theme/app_colors.dart';
-import 'theme/admin_ui.dart';
-import 'theme/responsive_layout.dart';
+import 'package:norges_tour_admin/pages/dashboard/dashboard_page.dart';
+import 'package:norges_tour_admin/pages/all_players_page.dart';
+import 'package:norges_tour_admin/pages/player_claims_page.dart';
+import 'package:norges_tour_admin/theme/app_colors.dart';
+import 'package:norges_tour_admin/theme/admin_ui.dart';
+import 'package:norges_tour_admin/theme/responsive_layout.dart';
 
 /// Top-level navigation items supported by the Spike Dunk Admin Shell.
 enum AdminNavDestination {
