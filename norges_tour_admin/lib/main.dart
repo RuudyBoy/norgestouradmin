@@ -13,6 +13,7 @@ import 'admin_shell.dart';
 import 'theme/responsive_layout.dart';
 import 'theme/admin_ui.dart';
 import 'theme/app_text_styles.dart';
+import 'utils/format.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -234,8 +235,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }).toList();
 
     int byStart(Map<String, dynamic> a, Map<String, dynamic> b) {
-      final da = _parseNoDate(a['start_date'] as String?);
-      final db = _parseNoDate(b['start_date'] as String?);
+      final da = parseNoDate(a['start_date'] as String?);
+      final db = parseNoDate(b['start_date'] as String?);
       if (da == null && db == null) return 0;
       if (da == null) return 1;
       if (db == null) return -1;
@@ -420,21 +421,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
 // Visningshjelpere (rene funksjoner – ingen databaseendringer)
 // ════════════════════════════════════════════════════════════════════════════
 
-DateTime? _parseNoDate(String? s) {
-  if (s == null) return null;
-  final p = s.trim().split('.');
-  if (p.length != 3) return null;
-  final d = int.tryParse(p[0]);
-  final m = int.tryParse(p[1]);
-  final y = int.tryParse(p[2]);
-  if (d == null || m == null || y == null) return null;
-  return DateTime(y, m, d);
-}
-
 /// 'live' (innenfor datoene), 'upcoming' eller 'done' – ut fra start/slutt-dato.
 String _tournamentPhase(Map<String, dynamic> d) {
-  final start = _parseNoDate(d['start_date'] as String?);
-  final end = _parseNoDate(d['end_date'] as String?) ?? start;
+  final start = parseNoDate(d['start_date'] as String?);
+  final end = parseNoDate(d['end_date'] as String?) ?? start;
   if (start == null || end == null) return 'upcoming';
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
@@ -443,38 +433,9 @@ String _tournamentPhase(Map<String, dynamic> d) {
   return 'live';
 }
 
-String _two(int n) => n.toString().padLeft(2, '0');
-
 /// «22.–24.08.2026» / «30.08.–01.09.2026» / original tekst som reserve.
-String _formatDateRange(String? startS, String? endS, {bool withYear = true}) {
-  final s = _parseNoDate(startS);
-  final e = _parseNoDate(endS);
-  if (s == null || e == null) return '${startS ?? '?'} - ${endS ?? '?'}';
-  final y = withYear ? '.${e.year}' : '';
-  if (s == e) return '${_two(s.day)}.${_two(s.month)}$y';
-  if (s.year == e.year && s.month == e.month) {
-    return '${_two(s.day)}.–${_two(e.day)}.${_two(e.month)}$y';
-  }
-  return '${_two(s.day)}.${_two(s.month)}.–${_two(e.day)}.${_two(e.month)}$y';
-}
-
-String _shortDate(String? s) {
-  if (s == null || s.isEmpty) return '–';
-  final parts = s.split('.');
-  if (parts.length >= 2) return '${parts[0]}.${parts[1]}';
-  return s;
-}
-
-/// Live-score for én side: fullførte sett + pågående poeng, f.eks. «21  14».
-String _liveScoreLine(Map<String, dynamic> d, bool home) {
-  final past = (d['past_sets'] as List?) ?? const [];
-  final parts = <String>[];
-  for (final s in past) {
-    if (s is Map) parts.add('${s[home ? 'home' : 'away']}');
-  }
-  parts.add('${d[home ? 'home_score' : 'away_score'] ?? 0}');
-  return parts.join('  ');
-}
+String _formatDateRange(String? startS, String? endS, {bool withYear = true}) =>
+    formatDateRange(startS, endS, withYear: withYear) ?? '${startS ?? '?'} - ${endS ?? '?'}';
 
 String _courtLabel(String? court) {
   final c = (court ?? '').trim();
@@ -560,23 +521,18 @@ class _TourStatsBuilder extends StatelessWidget {
                 var delayed = 0;
                 String? delayedInfo;
                 String? nextTime;
-                final todayStr = '${_two(now.day)}.${_two(now.month)}.${now.year}';
+                final todayStr = fmtNoDate(now);
                 for (final m in matches) {
                   if (m['status'] != 'scheduled') continue;
                   final date = m['match_date'] as String? ?? '';
                   final time = m['match_time'] as String? ?? '';
-                  final dp = date.split('.');
-                  final tp = time.split(':');
-                  if (dp.length == 3 && tp.length == 2) {
-                    try {
-                      final dt = DateTime(int.parse(dp[2]), int.parse(dp[1]), int.parse(dp[0]),
-                          int.parse(tp[0]), int.parse(tp[1]));
-                      final diff = now.difference(dt).inMinutes;
-                      if (diff > 0) {
-                        delayed++;
-                        delayedInfo ??= '${m['court'] ?? ''} · +${diff}min';
-                      }
-                    } catch (_) {}
+                  final dt = parseNoDateTime(date, time);
+                  if (dt != null) {
+                    final diff = now.difference(dt).inMinutes;
+                    if (diff > 0) {
+                      delayed++;
+                      delayedInfo ??= '${m['court'] ?? ''} · +${diff}min';
+                    }
                   }
                   if (date == todayStr && time.isNotEmpty) {
                     if (nextTime == null || time.compareTo(nextTime) < 0) nextTime = time;
@@ -696,7 +652,7 @@ Widget _registrationCell(Map<String, dynamic> data) {
     children: [
       isOpen ? const AdminPill.success('Åpen') : const AdminPill.neutral('Stengt'),
       const SizedBox(height: 4),
-      Text('Frist ${_shortDate(data['registration_deadline'] as String?)}',
+      Text('Frist ${shortDate(data['registration_deadline'] as String?)}',
           style: AdminText.ui(size: 12, color: AppColors.adminTextSecondary)),
     ],
   );
@@ -1072,8 +1028,8 @@ class _LiveHeroCard extends StatelessWidget {
     final name = data['name'] as String? ?? 'Ukjent';
     final location = data['location'] as String? ?? 'Ukjent sted';
     final courts = (data['courts_count'] as num?)?.toInt();
-    final start = _parseNoDate(data['start_date'] as String?);
-    final end = _parseNoDate(data['end_date'] as String?);
+    final start = parseNoDate(data['start_date'] as String?);
+    final end = parseNoDate(data['end_date'] as String?);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     String dayInfo = 'PÅGÅR NÅ';
@@ -1226,9 +1182,9 @@ class _LiveHeroCard extends StatelessWidget {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text(_liveScoreLine(m, true),
+                                Text(liveScoreLine(m, true),
                                     style: AdminText.mono(size: 15, weight: FontWeight.w600, color: Colors.white, height: 1.5)),
-                                Text(_liveScoreLine(m, false),
+                                Text(liveScoreLine(m, false),
                                     style: AdminText.mono(size: 15, weight: FontWeight.w600, color: Colors.white, height: 1.5)),
                               ],
                             ),
@@ -1487,7 +1443,7 @@ class _TournamentCard extends StatelessWidget {
                         Expanded(
                           child: AdminStat(
                             label: 'Frist',
-                            value: Text(_shortDate(deadline),
+                            value: Text(shortDate(deadline),
                                 style: AdminText.ui(size: 22, weight: FontWeight.w700, color: AppColors.adminWarning)),
                           ),
                         ),

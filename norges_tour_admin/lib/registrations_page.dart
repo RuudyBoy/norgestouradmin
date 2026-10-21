@@ -40,18 +40,8 @@ class _RegistrationsPageState extends State<RegistrationsPage>
   }
 
   // ─── Statusfarger ─────────────────────────────────────────────────────────
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'accepted':
-        return AppColors.green;
-      case 'waitlist':
-        return AppColors.adminPrimary;
-      case 'rejected':
-        return AppColors.adminPrimary;
-      default:
-        return AppColors.adminPrimary;
-    }
-  }
+  Color _statusColor(String status) =>
+      status == 'accepted' ? AppColors.green : AppColors.adminPrimary;
 
   String _statusLabel(String status) {
     switch (status) {
@@ -137,14 +127,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
 
   // ─── Seeding-preview ──────────────────────────────────────────────────────
   void _showSeedingPreview(List<DocumentSnapshot> docs) {
-    final accepted =
-        docs.where((d) => (d.data() as Map)['status'] == 'accepted').toList();
-
-    accepted.sort((a, b) {
-      final aR = (a.data() as Map)['combined_ranking'] as int? ?? 0;
-      final bR = (b.data() as Map)['combined_ranking'] as int? ?? 0;
-      return bR.compareTo(aR); // høyest ranking = seed 1
-    });
+    final accepted = _acceptedBySeed(docs);
 
     showDialog(
       context: context,
@@ -192,11 +175,19 @@ class _RegistrationsPageState extends State<RegistrationsPage>
   }
 
   Color _seedColor(int seed) {
-    if (seed <= 4) return AppColors.adminPrimary;
     if (seed <= 16) return AppColors.adminPrimary;
     if (seed <= 32) return AppColors.green;
     return AppColors.adminTextSecondary;
   }
+
+  /// Godkjente påmeldinger sortert etter rankingpoeng (høyest = seed 1).
+  static List<DocumentSnapshot> _acceptedBySeed(List<DocumentSnapshot> docs) =>
+      docs.where((d) => (d.data() as Map)['status'] == 'accepted').toList()
+        ..sort((a, b) {
+          final aR = (a.data() as Map)['combined_ranking'] as int? ?? 0;
+          final bR = (b.data() as Map)['combined_ranking'] as int? ?? 0;
+          return bR.compareTo(aR);
+        });
 
   void _snack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -252,20 +243,10 @@ class _RegistrationsPageState extends State<RegistrationsPage>
         final all = snap.data?.docs ?? [];
 
         // Statistikk
+        int countStatus(String s) => all.where((d) => (d.data() as Map)['status'] == s).length;
         final counts = {
           'all': all.length,
-          'pending': all
-              .where((d) => (d.data() as Map)['status'] == 'pending')
-              .length,
-          'accepted': all
-              .where((d) => (d.data() as Map)['status'] == 'accepted')
-              .length,
-          'waitlist': all
-              .where((d) => (d.data() as Map)['status'] == 'waitlist')
-              .length,
-          'rejected': all
-              .where((d) => (d.data() as Map)['status'] == 'rejected')
-              .length,
+          for (final s in const ['pending', 'accepted', 'waitlist', 'rejected']) s: countStatus(s),
         };
 
         // Filter
@@ -430,16 +411,7 @@ class _RegistrationsPageState extends State<RegistrationsPage>
     final wildcard = data['wildcard_requested'] as bool? ?? false;
 
     // Seed-nummer blant godkjente
-    final acceptedSorted = all
-        .where((d) => (d.data() as Map)['status'] == 'accepted')
-        .toList()
-      ..sort((a, b) {
-        final aR = (a.data() as Map)['combined_ranking'] as int? ?? 0;
-        final bR = (b.data() as Map)['combined_ranking'] as int? ?? 0;
-        return bR.compareTo(aR);
-      });
-    final seedIdx =
-        acceptedSorted.indexWhere((d) => d.id == doc.id);
+    final seedIdx = _acceptedBySeed(all).indexWhere((d) => d.id == doc.id);
     final seedNum = seedIdx >= 0 ? seedIdx + 1 : null;
 
     return Card(

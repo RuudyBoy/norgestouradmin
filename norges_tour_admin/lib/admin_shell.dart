@@ -278,33 +278,16 @@ class AdminSidebar extends StatelessWidget {
           ),
 
           // ── Navigation Destinations ───────────────────────────────
-          _SidebarTile(
-            title: AdminNavDestination.tournaments.title,
-            icon: selectedIndex == 0
-                ? AdminNavDestination.tournaments.iconFilled
-                : AdminNavDestination.tournaments.iconOutlined,
-            isSelected: selectedIndex == 0,
-            onTap: () => onDestinationSelected(0),
-          ),
-          const SizedBox(height: 4),
-          _SidebarTile(
-            title: AdminNavDestination.players.title,
-            icon: selectedIndex == 1
-                ? AdminNavDestination.players.iconFilled
-                : AdminNavDestination.players.iconOutlined,
-            isSelected: selectedIndex == 1,
-            onTap: () => onDestinationSelected(1),
-          ),
-          const SizedBox(height: 4),
-          _SidebarTile(
-            title: AdminNavDestination.claims.title,
-            icon: selectedIndex == 2
-                ? AdminNavDestination.claims.iconFilled
-                : AdminNavDestination.claims.iconOutlined,
-            isSelected: selectedIndex == 2,
-            onTap: () => onDestinationSelected(2),
-            trailing: _claimsBadge(),
-          ),
+          for (final dest in AdminNavDestination.values) ...[
+            if (dest.index > 0) const SizedBox(height: 4),
+            _SidebarTile(
+              title: dest.title,
+              icon: selectedIndex == dest.index ? dest.iconFilled : dest.iconOutlined,
+              isSelected: selectedIndex == dest.index,
+              onTap: () => onDestinationSelected(dest.index),
+              trailing: dest == AdminNavDestination.claims ? _claimsBadge() : null,
+            ),
+          ],
 
           const Spacer(),
 
@@ -510,83 +493,26 @@ class AdminDrawer extends StatelessWidget {
             ),
           ),
 
-          // ── Turneringer ───────────────────────────────────────────
-          ListTile(
-            leading: Icon(
-              selectedIndex == 0
-                  ? AdminNavDestination.tournaments.iconFilled
-                  : AdminNavDestination.tournaments.iconOutlined,
-              color: selectedIndex == 0
-                  ? AppColors.adminSidebarText
-                  : AppColors.adminSidebarTextSecondary,
-            ),
-            title: Text(
-              AdminNavDestination.tournaments.title,
-              style: TextStyle(
-                color: selectedIndex == 0
+          // ── Turneringer · Spillerdatabase · Spillerkrav ───────────
+          for (final dest in AdminNavDestination.values)
+            ListTile(
+              leading: Icon(
+                selectedIndex == dest.index ? dest.iconFilled : dest.iconOutlined,
+                color: selectedIndex == dest.index
                     ? AppColors.adminSidebarText
-                    : AppColors.adminSidebarText,
-                fontWeight: selectedIndex == 0
-                    ? FontWeight.bold
-                    : FontWeight.normal,
+                    : AppColors.adminSidebarTextSecondary,
               ),
-            ),
-            selected: selectedIndex == 0,
-            selectedTileColor: AppColors.adminPrimary,
-            onTap: () => _handleNavigation(context, 0),
-          ),
-
-          // ── Spillerdatabase ───────────────────────────────────────
-          ListTile(
-            leading: Icon(
-              selectedIndex == 1
-                  ? AdminNavDestination.players.iconFilled
-                  : AdminNavDestination.players.iconOutlined,
-              color: selectedIndex == 1
-                  ? AppColors.adminSidebarText
-                  : AppColors.adminSidebarTextSecondary,
-            ),
-            title: Text(
-              AdminNavDestination.players.title,
-              style: TextStyle(
-                color: selectedIndex == 1
-                    ? AppColors.adminSidebarText
-                    : AppColors.adminSidebarText,
-                fontWeight: selectedIndex == 1
-                    ? FontWeight.bold
-                    : FontWeight.normal,
+              title: Text(
+                dest.title,
+                style: TextStyle(
+                  color: AppColors.adminSidebarText,
+                  fontWeight: selectedIndex == dest.index ? FontWeight.bold : FontWeight.normal,
+                ),
               ),
+              selected: selectedIndex == dest.index,
+              selectedTileColor: AppColors.adminPrimary,
+              onTap: () => _handleNavigation(context, dest.index),
             ),
-            selected: selectedIndex == 1,
-            selectedTileColor: AppColors.adminPrimary,
-            onTap: () => _handleNavigation(context, 1),
-          ),
-
-          // ── Spillerkrav ───────────────────────────────────────────
-          ListTile(
-            leading: Icon(
-              selectedIndex == 2
-                  ? AdminNavDestination.claims.iconFilled
-                  : AdminNavDestination.claims.iconOutlined,
-              color: selectedIndex == 2
-                  ? AppColors.adminSidebarText
-                  : AppColors.adminSidebarTextSecondary,
-            ),
-            title: Text(
-              AdminNavDestination.claims.title,
-              style: TextStyle(
-                color: selectedIndex == 2
-                    ? AppColors.adminSidebarText
-                    : AppColors.adminSidebarText,
-                fontWeight: selectedIndex == 2
-                    ? FontWeight.bold
-                    : FontWeight.normal,
-              ),
-            ),
-            selected: selectedIndex == 2,
-            selectedTileColor: AppColors.adminPrimary,
-            onTap: () => _handleNavigation(context, 2),
-          ),
 
           const Divider(color: AppColors.adminSidebarDivider),
 

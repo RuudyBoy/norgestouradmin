@@ -11,6 +11,7 @@ import 'admin_shell.dart';
 import 'theme/app_colors.dart';
 import 'theme/admin_ui.dart';
 import 'theme/responsive_layout.dart';
+import 'utils/format.dart';
 
 class TournamentControlPage extends StatefulWidget {
   final String tournamentId;
@@ -157,20 +158,38 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       'away_sets': 0,
       'current_set': 1,
       'past_sets': [],
-      'team_a_name': tA['team_name'] ?? 'Ukjent',
-      'team_a_id': teamA.id,
-      'team_a_p1_name': tA['player1_name'] ?? '',
-      'team_a_p1_id': tA['player1_id'] ?? '',
-      'team_a_p2_name': tA['player2_name'] ?? '',
-      'team_a_p2_id': tA['player2_id'] ?? '',
-      'team_b_name': tB['team_name'] ?? 'Ukjent',
-      'team_b_id': teamB.id,
-      'team_b_p1_name': tB['player1_name'] ?? '',
-      'team_b_p1_id': tB['player1_id'] ?? '',
-      'team_b_p2_name': tB['player2_name'] ?? '',
-      'team_b_p2_id': tB['player2_id'] ?? '',
+      ..._slotFromTeam('team_a', teamA.id, tA, emptyName: 'Ukjent'),
+      ..._slotFromTeam('team_b', teamB.id, tB, emptyName: 'Ukjent'),
     };
   }
+
+  /// Hvor langt en klasse har kommet, ut fra kampene i klassen.
+  static _ClassPhase _classPhase(List<DocumentSnapshot> matches) {
+    if (matches.isEmpty) return _ClassPhase.notGenerated;
+    if (matches.every((m) => (m.data() as Map)['status'] == 'finished')) return _ClassPhase.done;
+    final playoffStarted = matches.any((m) {
+      final d = m.data() as Map;
+      return d['stage'] == 'playoff' && (d['status'] == 'live' || d['status'] == 'finished');
+    });
+    return playoffStarted ? _ClassPhase.playoffs : _ClassPhase.groups;
+  }
+
+  /// De seks lagfeltene i en kamp (`<prefix>_name`, `_id`, `_p1_name`, `_p1_id`,
+  /// `_p2_name`, `_p2_id`) fylt fra et lagdokument i `teams`.
+  static Map<String, dynamic> _slotFromTeam(String prefix, Object teamId, Map team, {String emptyName = ''}) => {
+    '${prefix}_name': team['team_name'] ?? emptyName,
+    '${prefix}_id': teamId,
+    '${prefix}_p1_name': team['player1_name'] ?? '',
+    '${prefix}_p1_id': team['player1_id'] ?? '',
+    '${prefix}_p2_name': team['player2_name'] ?? '',
+    '${prefix}_p2_id': team['player2_id'] ?? '',
+  };
+
+  /// De seks lagfeltene kopiert fra én side (`srcPrefix`) av en annen kamp.
+  static Map<String, dynamic> _slotFromMatch(String prefix, Map src, String srcPrefix) => {
+    for (final f in const ['name', 'id', 'p1_name', 'p1_id', 'p2_name', 'p2_id'])
+      '${prefix}_$f': src['${srcPrefix}_$f'] ?? '',
+  };
 
   // ─── Team dialogs ──────────────────────────────────────────────────────────
 
@@ -983,14 +1002,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
             final homeWins = (src['home_score'] as int? ?? 0) > (src['away_score'] as int? ?? 0);
             final isWinner = fromSlot == 'winner';
             final useA = isWinner ? homeWins : !homeWins;
-            final sp = useA ? 'team_a' : 'team_b';
-
-            upd['${prefix}_name']   = src['${sp}_name']   ?? '';
-            upd['${prefix}_id']     = src['${sp}_id']     ?? '';
-            upd['${prefix}_p1_name'] = src['${sp}_p1_name'] ?? '';
-            upd['${prefix}_p1_id']   = src['${sp}_p1_id']   ?? '';
-            upd['${prefix}_p2_name'] = src['${sp}_p2_name'] ?? '';
-            upd['${prefix}_p2_id']   = src['${sp}_p2_id']   ?? '';
+            upd.addAll(_slotFromMatch(prefix, src, useA ? 'team_a' : 'team_b'));
           }
           continue;
         }
@@ -1001,12 +1013,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         if (fromGroup != null && fromPlace != null) {
           final team = teamByGroupPlace['${fromGroup}_$fromPlace'];
           if (team != null) {
-            upd['${prefix}_name']   = team['team_name']    ?? '';
-            upd['${prefix}_id']     = team['_id']          ?? '';
-            upd['${prefix}_p1_name'] = team['player1_name'] ?? '';
-            upd['${prefix}_p1_id']   = team['player1_id']   ?? '';
-            upd['${prefix}_p2_name'] = team['player2_name'] ?? '';
-            upd['${prefix}_p2_id']   = team['player2_id']   ?? '';
+            upd.addAll(_slotFromTeam(prefix, team['_id'] ?? '', team));
           }
         }
       }
@@ -1356,7 +1363,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
         }
         final sortedDates = byDateAll.keys.toList()..sort((a, b) => dateKey(a).compareTo(dateKey(b)));
         final now = DateTime.now();
-        final todayStr = '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
+        final todayStr = fmtNoDate(now);
         String? activeDate = _selectedScheduleDate;
         if (activeDate == null || !byDateAll.containsKey(activeDate)) {
           activeDate = byDateAll.containsKey(todayStr) ? todayStr : (sortedDates.isNotEmpty ? sortedDates.first : null);
@@ -1371,19 +1378,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
            final court = d['court'] as String? ?? '';
            if (court.isNotEmpty) courts.add(court);
 
-           final stage = d['stage'] as String? ?? '';
-           if (stage == 'group') {
-             final g = d['group'] as String? ?? '';
-             if (g.isNotEmpty) rounds.add('Pulje $g');
-           } else if (stage == 'playoff') {
-             final r = d['round'] as String? ?? '';
-             if (r == 'r16') {
-               rounds.add('1/16');
-             } else if (r == 'r8') rounds.add('1/8');
-             else if (r == 'qf') rounds.add('Kvart');
-             else if (r == 'sf') rounds.add('Semi');
-             else if (r == 'final') rounds.add('Finale');
-             else rounds.add('Playoff');
+           final stage = d['stage'];
+           final hasGroup = (d['group'] as String? ?? '').isNotEmpty;
+           if ((stage == 'group' && hasGroup) || stage == 'playoff') {
+             rounds.add(_roundFilterLabel(d));
            }
         }
         final sortedRounds = rounds.toList()..sort();
@@ -1391,25 +1389,9 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
         // Bruk filtrene (runde/bane/søk) – teller status før statusfilter
         if (_selectedRoundFilter != 'alle') {
-           dayMatches = dayMatches.where((m) {
-             final d = m.data() as Map<String, dynamic>;
-             final stage = d['stage'] as String? ?? '';
-             String roundLabel = '';
-             if (stage == 'group') {
-               final g = d['group'] as String? ?? '';
-               roundLabel = 'Pulje $g';
-             } else if (stage == 'playoff') {
-               final r = d['round'] as String? ?? '';
-               if (r == 'r16') {
-                 roundLabel = '1/16';
-               } else if (r == 'r8') roundLabel = '1/8';
-               else if (r == 'qf') roundLabel = 'Kvart';
-               else if (r == 'sf') roundLabel = 'Semi';
-               else if (r == 'final') roundLabel = 'Finale';
-               else roundLabel = 'Playoff';
-             }
-             return roundLabel == _selectedRoundFilter;
-           }).toList();
+           dayMatches = dayMatches
+               .where((m) => _roundFilterLabel(m.data() as Map) == _selectedRoundFilter)
+               .toList();
         }
         if (_selectedCourtFilter != 'alle') {
            dayMatches = dayMatches.where((m) => (m.data() as Map)['court'] == _selectedCourtFilter).toList();
@@ -1751,18 +1733,25 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     if (status == 'pending') return 'Venter...';
     final matchTime = d['match_time'] as String? ?? '';
     final matchDate = d['match_date'] as String? ?? '';
-    if (status == 'scheduled' && matchTime.isNotEmpty && matchDate.isNotEmpty) {
-      final parts = matchDate.split('.');
-      final timeParts = matchTime.split(':');
-      if (parts.length == 3 && timeParts.length == 2) {
-        try {
-          final scheduledDt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]), int.parse(timeParts[0]), int.parse(timeParts[1]));
-          final diff = DateTime.now().difference(scheduledDt).inMinutes;
-          if (diff > 0) return '+${diff}min';
-        } catch (_) {}
+    if (status == 'scheduled') {
+      final scheduledDt = parseNoDateTime(matchDate, matchTime);
+      if (scheduledDt != null) {
+        final diff = DateTime.now().difference(scheduledDt).inMinutes;
+        if (diff > 0) return '+${diff}min';
       }
     }
     return 'Planlagt';
+  }
+
+  /// Rundenavn i Runde-filteret i kampprogrammet («Pulje A», «1/16», «Kvart» …).
+  static String _roundFilterLabel(Map d) {
+    final stage = d['stage'] as String? ?? '';
+    if (stage == 'group') return 'Pulje ${d['group'] as String? ?? ''}';
+    if (stage == 'playoff') {
+      const labels = {'r16': '1/16', 'r8': '1/8', 'qf': 'Kvart', 'sf': 'Semi', 'final': 'Finale'};
+      return labels[d['round'] as String? ?? ''] ?? 'Playoff';
+    }
+    return '';
   }
 
   /// Visningshjelper: «Pulje A – K4» / «A-Bracket KF».
@@ -1779,16 +1768,6 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       return '$bl-Bracket $rl'.trim();
     }
     return '';
-  }
-
-  String _liveScoreLine(Map<String, dynamic> d, bool home) {
-    final past = (d['past_sets'] as List?) ?? const [];
-    final parts = <String>[];
-    for (final s in past) {
-      if (s is Map) parts.add('${s[home ? 'home' : 'away']}');
-    }
-    parts.add('${d[home ? 'home_score' : 'away_score'] ?? 0}');
-    return parts.join(' · ');
   }
 
   String _courtShort(String? court) {
@@ -1928,21 +1907,10 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
     );
   }
 
-  String _headerDateRange(String? s, String? e) {
-    DateTime? p(String? v) {
-      final parts = (v ?? '').split('.');
-      if (parts.length != 3) return null;
-      final d = int.tryParse(parts[0]), m = int.tryParse(parts[1]), y = int.tryParse(parts[2]);
-      if (d == null || m == null || y == null) return null;
-      return DateTime(y, m, d);
-    }
-    String two(int n) => n.toString().padLeft(2, '0');
-    final a = p(s), b = p(e);
-    if (a == null || b == null) return [s, e].whereType<String>().where((x) => x.isNotEmpty).join(' – ');
-    if (a == b) return '${two(a.day)}.${two(a.month)}.${a.year}';
-    if (a.year == b.year && a.month == b.month) return '${two(a.day)}.–${two(b.day)}.${two(b.month)}.${b.year}';
-    return '${two(a.day)}.${two(a.month)}.–${two(b.day)}.${two(b.month)}.${b.year}';
-  }
+  /// Datoperiode i headeren. Ugyldige datoer vises som de er lagret.
+  String _headerDateRange(String? s, String? e) =>
+      formatDateRange(s, e) ??
+      [s, e].whereType<String>().where((x) => x.isNotEmpty).join(' – ');
 
   Widget _buildHeaderContent(
     BuildContext context, {
@@ -1993,7 +1961,7 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
           AdminButton(
             label: isPublished ? 'Skjul turnering' : 'Publiser turnering',
             icon: isPublished ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-            onPressed: () { if (isPublished) { _unpublishCategory(); } else { _publishCategory(); } },
+            onPressed: () => _setPublished(!isPublished),
           ),
         PopupMenuButton<String>(
           tooltip: "Avanserte handlinger",
@@ -2312,19 +2280,12 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                       final cm = allMatches.where((m) => (m.data() as Map)['category_id'] == c.id).toList();
                       final ct = allTeams.where((t) => (t.data() as Map)['category_id'] == c.id).length;
                       final done = cm.where((m) => (m.data() as Map)['status'] == 'finished').length;
-                      String phase;
-                      if (cm.isEmpty) {
-                        phase = 'Oppsett ikke generert';
-                      } else if (done == cm.length) {
-                        phase = 'Ferdig';
-                      } else if (cm.any((m) {
-                        final d = m.data() as Map;
-                        return d['stage'] == 'playoff' && (d['status'] == 'live' || d['status'] == 'finished');
-                      })) {
-                        phase = 'Sluttspill pågår';
-                      } else {
-                        phase = 'Gruppespill';
-                      }
+                      final phase = switch (_classPhase(cm)) {
+                        _ClassPhase.notGenerated => 'Oppsett ikke generert',
+                        _ClassPhase.done => 'Ferdig',
+                        _ClassPhase.playoffs => 'Sluttspill pågår',
+                        _ClassPhase.groups => 'Gruppespill',
+                      };
                       classRows.add(Container(
                         padding: const EdgeInsets.symmetric(vertical: 10),
                         decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.adminDivider))),
@@ -2611,12 +2572,12 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                     ),
                   Row(children: [
                     Expanded(child: Text('${d['team_a_name'] ?? 'TBD'}', style: teamStyle, overflow: TextOverflow.ellipsis)),
-                    Text(_liveScoreLine(d, true), style: AdminText.mono(size: 14, weight: FontWeight.w600)),
+                    Text(liveScoreLine(d, true, separator: ' · '), style: AdminText.mono(size: 14, weight: FontWeight.w600)),
                   ]),
                   const SizedBox(height: 2),
                   Row(children: [
                     Expanded(child: Text('${d['team_b_name'] ?? 'TBD'}', style: teamStyle, overflow: TextOverflow.ellipsis)),
-                    Text(_liveScoreLine(d, false), style: AdminText.mono(size: 14, weight: FontWeight.w600)),
+                    Text(liveScoreLine(d, false, separator: ' · '), style: AdminText.mono(size: 14, weight: FontWeight.w600)),
                   ]),
                 ],
               ),
@@ -3159,20 +3120,12 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
                           final ct = teams.where((t) => (t.data() as Map)['category_id'] == c.id).toList();
                           final groupsN = ct.map((t) => (t.data() as Map)['group']).whereType<String>().toSet().length;
                           final done = cm.where((m) => (m.data() as Map)['status'] == 'finished').length;
-                          final hasPlayoffStarted = cm.any((m) {
-                            final d = m.data() as Map;
-                            return d['stage'] == 'playoff' && (d['status'] == 'live' || d['status'] == 'finished');
-                          });
-                          Widget phase;
-                          if (cm.isEmpty) {
-                            phase = const AdminPill.neutral('Ikke generert', height: 20);
-                          } else if (done == cm.length) {
-                            phase = const AdminPill.success('Ferdig', height: 20);
-                          } else if (hasPlayoffStarted) {
-                            phase = const AdminPill.info('Sluttspill', height: 20);
-                          } else {
-                            phase = const AdminPill.neutral('Gruppespill', height: 20);
-                          }
+                          final Widget phase = switch (_classPhase(cm)) {
+                            _ClassPhase.notGenerated => const AdminPill.neutral('Ikke generert', height: 20),
+                            _ClassPhase.done => const AdminPill.success('Ferdig', height: 20),
+                            _ClassPhase.playoffs => const AdminPill.info('Sluttspill', height: 20),
+                            _ClassPhase.groups => const AdminPill.neutral('Gruppespill', height: 20),
+                          };
                           final meta = [
                             '${ct.length} lag',
                             if (groupsN > 0) '$groupsN ${groupsN == 1 ? 'pulje' : 'puljer'}',
@@ -4234,36 +4187,11 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
       final aId = d['team_a_id'] as String? ?? '';
       final bId = d['team_b_id'] as String? ?? '';
 
-      if (aId == teamA.id) {
-        upd['team_a_id']      = teamB.id;
-        upd['team_a_name']    = dataB['team_name']    ?? '';
-        upd['team_a_p1_name'] = dataB['player1_name'] ?? '';
-        upd['team_a_p1_id']   = dataB['player1_id']   ?? '';
-        upd['team_a_p2_name'] = dataB['player2_name'] ?? '';
-        upd['team_a_p2_id']   = dataB['player2_id']   ?? '';
-      } else if (aId == teamB.id) {
-        upd['team_a_id']      = teamA.id;
-        upd['team_a_name']    = dataA['team_name']    ?? '';
-        upd['team_a_p1_name'] = dataA['player1_name'] ?? '';
-        upd['team_a_p1_id']   = dataA['player1_id']   ?? '';
-        upd['team_a_p2_name'] = dataA['player2_name'] ?? '';
-        upd['team_a_p2_id']   = dataA['player2_id']   ?? '';
-      }
-
-      if (bId == teamA.id) {
-        upd['team_b_id']      = teamB.id;
-        upd['team_b_name']    = dataB['team_name']    ?? '';
-        upd['team_b_p1_name'] = dataB['player1_name'] ?? '';
-        upd['team_b_p1_id']   = dataB['player1_id']   ?? '';
-        upd['team_b_p2_name'] = dataB['player2_name'] ?? '';
-        upd['team_b_p2_id']   = dataB['player2_id']   ?? '';
-      } else if (bId == teamB.id) {
-        upd['team_b_id']      = teamA.id;
-        upd['team_b_name']    = dataA['team_name']    ?? '';
-        upd['team_b_p1_name'] = dataA['player1_name'] ?? '';
-        upd['team_b_p1_id']   = dataA['player1_id']   ?? '';
-        upd['team_b_p2_name'] = dataA['player2_name'] ?? '';
-        upd['team_b_p2_id']   = dataA['player2_id']   ?? '';
+      // Lag A ↔ lag B der de står i kampen
+      for (final prefix in const ['team_a', 'team_b']) {
+        final id = prefix == 'team_a' ? aId : bId;
+        if (id == teamA.id) upd.addAll(_slotFromTeam(prefix, teamB.id, dataB));
+        if (id == teamB.id) upd.addAll(_slotFromTeam(prefix, teamA.id, dataA));
       }
 
       if (upd.isNotEmpty) batch.update(m.reference, upd);
@@ -4276,19 +4204,18 @@ class _TournamentControlPageState extends State<TournamentControlPage> {
 
   // ─── Publisering ───────────────────────────────────────────────────────────
 
-    Future<void> _publishCategory() async {
+  /// Publiserer eller skjuler alle klassene i turneringen (spillerappen viser
+  /// bare klasser med `published == true`).
+  Future<void> _setPublished(bool published) async {
     final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
     final batch = FirebaseFirestore.instance.batch();
-    for (var doc in snap.docs) { batch.update(doc.reference, {'published': true}); }
+    for (final doc in snap.docs) {
+      batch.update(doc.reference, {'published': published});
+    }
     await batch.commit();
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hele turneringen er nå publisert offentlig')));
-  }
-
-  Future<void> _unpublishCategory() async {
-    final snap = await FirebaseFirestore.instance.collection('categories').where('tournament_id', isEqualTo: widget.tournamentId).get();
-    final batch = FirebaseFirestore.instance.batch();
-    for (var doc in snap.docs) { batch.update(doc.reference, {'published': false}); }
-    await batch.commit();
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hele turneringen er nå skjult')));
+    _snack(published ? 'Hele turneringen er nå publisert offentlig' : 'Hele turneringen er nå skjult');
   }
 }
+
+/// Fase for én klasse, brukt i oversikten og klasselisten i Oppsett.
+enum _ClassPhase { notGenerated, groups, playoffs, done }

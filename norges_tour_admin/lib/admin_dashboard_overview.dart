@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_shell.dart';
 import 'theme/app_colors.dart';
 import 'theme/admin_ui.dart';
+import 'utils/format.dart';
 
 /// «Krever handling» – tre KPI-kort øverst på turneringsoversikten:
 ///   1. Påmeldinger som venter (registrations.status == 'pending')
@@ -84,24 +85,6 @@ class AdminDashboardOverview extends StatelessWidget {
     );
   }
 
-  static DateTime? _parse(String? s) {
-    if (s == null) return null;
-    final p = s.split('.');
-    if (p.length != 3) return null;
-    final d = int.tryParse(p[0]);
-    final m = int.tryParse(p[1]);
-    final y = int.tryParse(p[2]);
-    if (d == null || m == null || y == null) return null;
-    return DateTime(y, m, d);
-  }
-
-  static String _short(String? s) {
-    if (s == null || s.isEmpty) return '–';
-    final parts = s.split('.');
-    if (parts.length >= 2) return '${parts[0]}.${parts[1]}';
-    return s;
-  }
-
   Widget _buildCards(
     BuildContext context,
     List<Map<String, dynamic>> tours,
@@ -131,7 +114,7 @@ class AdminDashboardOverview extends StatelessWidget {
     DateTime? nearestDate;
     for (final t in tours) {
       if ((t['registration_status'] as String? ?? 'open') != 'open') continue;
-      final dl = _parse(t['registration_deadline'] as String?);
+      final dl = parseNoDate(t['registration_deadline'] as String?);
       if (dl == null || dl.isBefore(today)) continue;
       if (nearestDate == null || dl.isBefore(nearestDate)) {
         nearestDate = dl;
@@ -150,7 +133,7 @@ class AdminDashboardOverview extends StatelessWidget {
           : days == 1
               ? 'Frist i morgen'
               : 'Frist om $days dager';
-      dlSub = '${nearest['name'] ?? 'Ukjent'} · Frist ${_short(nearest['registration_deadline'] as String?)}';
+      dlSub = '${nearest['name'] ?? 'Ukjent'} · Frist ${shortDate(nearest['registration_deadline'] as String?)}';
     }
 
     final cards = <Widget>[

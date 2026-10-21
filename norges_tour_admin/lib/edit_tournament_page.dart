@@ -4,6 +4,7 @@ import 'theme/admin_ui.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_text_styles.dart';
 import 'theme/responsive_layout.dart';
+import 'utils/format.dart';
 
 class EditTournamentPage extends StatefulWidget {
   final String tournamentId;
@@ -70,33 +71,13 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     _tournamentStatus = d['status'] as String? ?? 'upcoming';
     _registrationStatus = d['registration_status'] as String? ?? 'open';
 
-    // Parse dates DD.MM.YYYY
-    _startDate = _parseDate(d['start_date']);
-    _endDate = _parseDate(d['end_date']);
-    _registrationDeadline = _parseDate(d['registration_deadline']);
+    _startDate = parseNoDate(d['start_date']?.toString());
+    _endDate = parseNoDate(d['end_date']?.toString());
+    _registrationDeadline = parseNoDate(d['registration_deadline']?.toString());
 
-    final rawStartTime = d['start_time'] as String?;
-    if (rawStartTime != null) {
-      final parts = rawStartTime.split(':');
-      if (parts.length == 2) {
-        _startTime = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? 9,
-          minute: int.tryParse(parts[1]) ?? 0,
-        );
-      }
-    }
-    
-    final rawEndTime = d['end_time'] as String?;
-    if (rawEndTime != null) {
-      final parts = rawEndTime.split(':');
-      if (parts.length == 2) {
-        _endTime = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? 17,
-          minute: int.tryParse(parts[1]) ?? 0,
-        );
-      }
-    }
-    
+    _startTime = _parseTime(d['start_time'] as String?, defaultHour: 9);
+    _endTime = _parseTime(d['end_time'] as String?, defaultHour: 17);
+
     _maxTotalCtrl = TextEditingController(text: d['max_teams_total']?.toString() ?? '');
     _customTypeCtrl = TextEditingController(text: _selectedTypeId == 'custom' ? (d['tournament_type_label'] ?? '') : '');
   }
@@ -111,23 +92,16 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
     super.dispose();
   }
 
-  DateTime? _parseDate(dynamic raw) {
+  /// «HH:mm» → [TimeOfDay]. Ugyldig time eller minutt erstattes med standardverdien.
+  static TimeOfDay? _parseTime(String? raw, {required int defaultHour}) {
     if (raw == null) return null;
-    try {
-      final parts = raw.toString().split('.');
-      if (parts.length == 3) {
-        return DateTime(
-          int.parse(parts[2]),
-          int.parse(parts[1]),
-          int.parse(parts[0]),
-        );
-      }
-    } catch (_) {}
-    return null;
+    final parts = raw.split(':');
+    if (parts.length != 2) return null;
+    return TimeOfDay(
+      hour: int.tryParse(parts[0]) ?? defaultHour,
+      minute: int.tryParse(parts[1]) ?? 0,
+    );
   }
-
-  String _fmtDate(DateTime d) =>
-      "${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}";
 
   Future<void> _pickDate(String which) async {
     final now = DateTime.now();
@@ -168,8 +142,8 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
       _snack("Både starttid og sluttid må være valgt!");
       return;
     }
-    int? mt = int.tryParse(_maxTotalCtrl.text.trim());
-    if (mt == null) {
+    final maxTotal = int.tryParse(_maxTotalCtrl.text.trim());
+    if (maxTotal == null) {
       _snack("Maks lag totalt må være et tall.");
       return;
     }
@@ -184,11 +158,10 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         'image_url': _imageUrlCtrl.text.trim(),
         'courts_count': _courtsCount,
         'match_duration_minutes': _matchDurationMinutes,
-        if (_startTime != null)
-          'start_time': '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}',
-        if (_endTime != null)
-          'end_time': '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}',
-        'max_teams_total': int.tryParse(_maxTotalCtrl.text.trim()),
+        // Start- og sluttid er validert over.
+        'start_time': fmtTimeOfDay(_startTime!),
+        'end_time': fmtTimeOfDay(_endTime!),
+        'max_teams_total': maxTotal,
         'tournament_type': _selectedTypeId,
         'tournament_type_label': _selectedTypeId == 'custom' ? _customTypeCtrl.text.trim() : (_typeLabels[_selectedTypeId] ?? _selectedTypeId),
         'has_division_play': _hasDivisionPlay,
@@ -196,10 +169,10 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
         'interleave_rounds': _interleaveRounds,
         'status': _tournamentStatus,
         'registration_status': _registrationStatus,
-        if (_startDate != null) 'start_date': _fmtDate(_startDate!),
-        if (_endDate != null) 'end_date': _fmtDate(_endDate!),
+        if (_startDate != null) 'start_date': fmtNoDate(_startDate!),
+        if (_endDate != null) 'end_date': fmtNoDate(_endDate!),
         if (_registrationDeadline != null)
-          'registration_deadline': _fmtDate(_registrationDeadline!),
+          'registration_deadline': fmtNoDate(_registrationDeadline!),
         'updated_at': FieldValue.serverTimestamp(),
       });
       if (mounted) {
@@ -372,7 +345,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                   ),
                   label: Text(
                     _startTime != null
-                        ? 'Starttid (per dag): ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'
+                        ? 'Starttid (per dag): ${fmtTimeOfDay(_startTime!)}'
                         : 'Starttid (per dag) *',
                     style: TextStyle(
                       color: _startTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
@@ -401,7 +374,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                   ),
                   label: Text(
                     _endTime != null
-                        ? 'Sluttid (per dag): ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'
+                        ? 'Sluttid (per dag): ${fmtTimeOfDay(_endTime!)}'
                         : 'Sluttid (per dag) *',
                     style: TextStyle(
                       color: _endTime != null ? AppColors.adminPrimary : AppColors.adminTextSecondary,
@@ -523,7 +496,7 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
       OutlinedButton.icon(
         icon: Icon(icon, size: 15, color: date != null ? null : color),
         label: Text(
-          date != null ? "$label: ${_fmtDate(date)}" : "$label (ikke satt)",
+          date != null ? "$label: ${fmtNoDate(date)}" : "$label (ikke satt)",
           style: TextStyle(color: date != null ? null : color),
           overflow: TextOverflow.ellipsis,
         ),
@@ -658,14 +631,14 @@ class _EditTournamentPageState extends State<EditTournamentPage> {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            Text(selectedStart != null ? "${selectedStart.hour.toString().padLeft(2,'0')}:${selectedStart.minute.toString().padLeft(2,'0')}" : "Bruk turneringens standard", style: const TextStyle(fontSize: 14)),
+                            Text(selectedStart != null ? fmtTimeOfDay(selectedStart) : "Bruk turneringens standard", style: const TextStyle(fontSize: 14)),
                             const Spacer(),
                             IconButton(
                               icon: const Icon(Icons.access_time),
                               onPressed: () async {
                                 final time = await showTimePicker(context: context, initialTime: selectedStart ?? const TimeOfDay(hour: 9, minute: 0));
                                 if (time != null) {
-                                  rt['1'] = "${time.hour.toString().padLeft(2,'0')}:${time.minute.toString().padLeft(2,'0')}";
+                                  rt['1'] = fmtTimeOfDay(time);
                                   await cat.reference.update({'round_start_times': rt});
                                 }
                               },

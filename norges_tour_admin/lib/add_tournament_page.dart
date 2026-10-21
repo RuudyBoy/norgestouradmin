@@ -4,6 +4,7 @@ import 'theme/admin_ui.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_text_styles.dart';
 import 'theme/responsive_layout.dart';
+import 'utils/format.dart';
 
 // ─── Turneringstyper med metadata ──────────────────────────────────────────
 class TournamentTypeConfig {
@@ -275,20 +276,15 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
       return;
     }
 
-    String fmt(DateTime d) =>
-        "${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}";
-    String fmtTime(TimeOfDay t) =>
-        "${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}";
-
     try {
       final tourData = <String, dynamic>{
         'name': _nameCtrl.text.trim(),
         'location': _locationCtrl.text.trim(),
-        'start_date': fmt(_startDate!),
-        'end_date': fmt(_endDate!),
-        'start_time': fmtTime(_startTime!),
-        'end_time': fmtTime(_endTime!),
-        'registration_deadline': fmt(_registrationDeadline!),
+        'start_date': fmtNoDate(_startDate!),
+        'end_date': fmtNoDate(_endDate!),
+        'start_time': fmtTimeOfDay(_startTime!),
+        'end_time': fmtTimeOfDay(_endTime!),
+        'registration_deadline': fmtNoDate(_registrationDeadline!),
         'image_url': _imageUrlCtrl.text.trim(),
         'courts_count': _courtsCount,
         'tournament_type': _selectedTypeId,
@@ -327,7 +323,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
 
         if (_categoryStartTimes.containsKey(name) && _categoryStartTimes[name] != null) {
           catData['round_start_times'] = {
-            '1': fmtTime(_categoryStartTimes[name]!)
+            '1': fmtTimeOfDay(_categoryStartTimes[name]!)
           };
         }
 
@@ -347,6 +343,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
   void _snack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
+  /// Dato på knappene, uten ledende nuller (f.eks. «3.8.2026»).
   String _fmtDate(DateTime d) => "${d.day}.${d.month}.${d.year}";
 
   @override
@@ -510,7 +507,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                         const SizedBox(width: 8),
                         Flexible(
                           child: Text(
-                            _startTime == null ? "Starttid (per dag) *" : "${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}",
+                            _startTime == null ? "Starttid (per dag) *" : fmtTimeOfDay(_startTime!),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -526,7 +523,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                         const SizedBox(width: 8),
                         Flexible(
                           child: Text(
-                            _endTime == null ? "Sluttid (per dag) *" : "${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}",
+                            _endTime == null ? "Sluttid (per dag) *" : fmtTimeOfDay(_endTime!),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -671,7 +668,7 @@ class _AddTournamentPageState extends State<AddTournamentPage> {
                             const SizedBox(height: 8),
                             Row(
                               children: [
-                                Text(selectedStart != null ? "${selectedStart.hour.toString().padLeft(2,'0')}:${selectedStart.minute.toString().padLeft(2,'0')}" : "Bruk turneringens standard", style: const TextStyle(fontSize: 14)),
+                                Text(selectedStart != null ? fmtTimeOfDay(selectedStart) : "Bruk turneringens standard", style: const TextStyle(fontSize: 14)),
                                 const Spacer(),
                                 IconButton(
                                   icon: const Icon(Icons.access_time),
