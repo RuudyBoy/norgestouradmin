@@ -1,6 +1,6 @@
 # Lokale verktøy og AI-agenter
 .claude/
-.agents/
+.agent/
 
 # Firebase Functions
 functions/node_modules/
