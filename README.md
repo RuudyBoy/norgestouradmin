@@ -82,3 +82,7 @@ npm run deploy
 Fungerende prototype, testet med demoturneringer. Ikke klar for ekte brukere ennå. Neste steg er strammere Firestore-regler, at all avansement-logikk ligger i Cloud Functions og en ryddigere kobling mellom bruker og spiller.
 
 Laget av Christian Jørgensen Ruud.
+
+---
+
+© 2026 Christian Jørgensen Ruud. All rights reserved.

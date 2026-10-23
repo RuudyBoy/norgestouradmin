@@ -9,3 +9,6 @@ functions/lib/
 # Firebase
 firebase-debug.log
 .firebase/
+
+# Interne rapporter
+CLEANUP_REPORT*.md
